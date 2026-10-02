@@ -1,0 +1,249 @@
+{
+  "name": "Cloud Logging overview",
+  "tags": [
+    "gcl"
+  ],
+  "tiles": [
+    {
+      "x": 0,
+      "y": 0,
+      "w": 6,
+      "h": 3,
+      "name": "Log entries",
+      "config": {
+        "displayType": "number",
+        "sourceId": "${source_id}",
+        "select": [
+          {
+            "alias": "Entries",
+            "valueExpression": "",
+            "aggFn": "count",
+            "where": "",
+            "whereLanguage": "lucene"
+          }
+        ],
+        "numberFormat": {
+          "output": "number",
+          "thousandSeparated": true
+        }
+      }
+    },
+    {
+      "x": 6,
+      "y": 0,
+      "w": 6,
+      "h": 3,
+      "name": "Share of ERROR and above",
+      "config": {
+        "displayType": "number",
+        "sourceId": "${source_id}",
+        "select": [
+          {
+            "alias": "errors",
+            "valueExpression": "",
+            "aggFn": "count",
+            "where": "SeverityNumber >= 17",
+            "whereLanguage": "sql"
+          },
+          {
+            "alias": "all",
+            "valueExpression": "",
+            "aggFn": "count",
+            "where": "",
+            "whereLanguage": "lucene"
+          }
+        ],
+        "numberFormat": {
+          "output": "number",
+          "mantissa": 1,
+          "unit": " %"
+        },
+        "formulas": [
+          {
+            "expression": "A / B * 100",
+            "alias": "ERROR+ (%)"
+          }
+        ]
+      }
+    },
+    {
+      "x": 12,
+      "y": 0,
+      "w": 6,
+      "h": 3,
+      "name": "HTTP latency p95",
+      "config": {
+        "displayType": "number",
+        "sourceId": "${source_id}",
+        "select": [
+          {
+            "alias": "p95",
+            "valueExpression": "HttpLatencySeconds",
+            "aggFn": "quantile",
+            "where": "HttpStatus > 0",
+            "whereLanguage": "sql",
+            "level": 0.95
+          }
+        ],
+        "numberFormat": {
+          "output": "duration",
+          "factor": 1
+        }
+      }
+    },
+    {
+      "x": 18,
+      "y": 0,
+      "w": 6,
+      "h": 3,
+      "name": "HTTP 5xx",
+      "config": {
+        "displayType": "number",
+        "sourceId": "${source_id}",
+        "select": [
+          {
+            "alias": "5xx",
+            "valueExpression": "",
+            "aggFn": "count",
+            "where": "HttpStatus >= 500",
+            "whereLanguage": "sql"
+          }
+        ],
+        "numberFormat": {
+          "output": "number",
+          "thousandSeparated": true
+        }
+      }
+    },
+    {
+      "x": 0,
+      "y": 3,
+      "w": 12,
+      "h": 5,
+      "name": "Entries by service",
+      "config": {
+        "displayType": "line",
+        "sourceId": "${source_id}",
+        "asRatio": false,
+        "fillNulls": true,
+        "groupBy": "ServiceName",
+        "select": [
+          {
+            "alias": "Entries",
+            "valueExpression": "",
+            "aggFn": "count",
+            "where": "",
+            "whereLanguage": "lucene"
+          }
+        ],
+        "seriesLimit": 8
+      }
+    },
+    {
+      "x": 12,
+      "y": 3,
+      "w": 12,
+      "h": 5,
+      "name": "Entries by severity",
+      "config": {
+        "displayType": "stacked_bar",
+        "sourceId": "${source_id}",
+        "asRatio": false,
+        "fillNulls": true,
+        "groupBy": "SeverityText",
+        "select": [
+          {
+            "alias": "Entries",
+            "valueExpression": "",
+            "aggFn": "count",
+            "where": "",
+            "whereLanguage": "lucene"
+          }
+        ]
+      }
+    },
+    {
+      "x": 0,
+      "y": 8,
+      "w": 12,
+      "h": 5,
+      "name": "HTTP latency p95 by service",
+      "config": {
+        "displayType": "line",
+        "sourceId": "${source_id}",
+        "asRatio": false,
+        "fillNulls": true,
+        "groupBy": "ServiceName",
+        "select": [
+          {
+            "alias": "p95",
+            "valueExpression": "HttpLatencySeconds",
+            "aggFn": "quantile",
+            "where": "HttpStatus > 0",
+            "whereLanguage": "sql",
+            "level": 0.95
+          }
+        ],
+        "numberFormat": {
+          "output": "duration",
+          "factor": 1
+        },
+        "seriesLimit": 6
+      }
+    },
+    {
+      "x": 12,
+      "y": 8,
+      "w": 12,
+      "h": 5,
+      "name": "Services with the most ERROR entries",
+      "config": {
+        "groupByColumnsOnLeft": true,
+        "onClick": {
+          "type": "search",
+          "target": {
+            "mode": "id",
+            "id": "${source_id}"
+          },
+          "whereLanguage": "sql",
+          "filters": [
+            {
+              "kind": "expressionTemplate",
+              "expression": "ServiceName",
+              "template": "{{ServiceName}}"
+            }
+          ]
+        },
+        "displayType": "table",
+        "sourceId": "${source_id}",
+        "asRatio": false,
+        "groupBy": "ServiceName",
+        "select": [
+          {
+            "alias": "Entries",
+            "valueExpression": "",
+            "aggFn": "count",
+            "where": "SeverityNumber >= 17",
+            "whereLanguage": "sql"
+          }
+        ],
+        "orderBy": "\"Entries\" DESC"
+      }
+    },
+    {
+      "x": 0,
+      "y": 13,
+      "w": 24,
+      "h": 6,
+      "name": "Entries containing timeout (タイムアウト)",
+      "config": {
+        "displayType": "search",
+        "sourceId": "${source_id}",
+        "select": "",
+        "where": "timeout OR タイムアウト",
+        "whereLanguage": "lucene"
+      }
+    }
+  ],
+  "filters": []
+}

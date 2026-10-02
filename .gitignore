@@ -1,0 +1,16 @@
+*.json
+!**/package.json
+*.txt
+*.log
+.env
+.clickhouse/
+__pycache__/
+# Terraform
+terraform/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform/terraform.tfvars
+crash.log
+cli/.env
+clickpipes-key.json

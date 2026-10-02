@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars and fill in.
+gcp_project_id        = "my-project"
+clickhouse_service_id = "00000000-0000-0000-0000-000000000000"
+
+# Optional
+# topic_storage_regions    = ["asia-northeast1"]
+# sink_exclusions          = [{ name = "k8s-lease-updates", filter = "protoPayload.methodName=\"io.k8s.coordination.v1.leases.update\"" }]
+# service_account_key_file = "clickpipes-key.json"
+# clickstack_connection_id = "<connection id from ClickStack Team Settings>"
