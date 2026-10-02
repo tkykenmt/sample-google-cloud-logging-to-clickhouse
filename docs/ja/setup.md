@@ -2,32 +2,32 @@
 
 [English](../en/setup.md) | 日本語
 
-Terraform で Google Cloud 側の部品、ClickHouse のテーブルと MV、ClickPipe、ClickStack のソースとダッシュボードを作ります。
-Terraform を使えない環境では、同じ構成を `cli/deploy.sh`（gcloud と clickhousectl）で作れます（「clickhousectl と gcloud で作る」）。
-設計の理由は [設計](design.md)、試しに動かす手順は [ハンズオン](hands-on.md) にあります。
+Terraform で Google Cloud 側のリソース、ClickHouse のテーブルと MV、ClickPipe、ClickStack のソースとダッシュボードを作ります。
+Terraform を使えない環境では、同じ構成を `cli/deploy.sh`（gcloud と clickhousectl）で構築できます（「clickhousectl と gcloud で構築する」を参照）。
+設計の理由は [設計](design.md)、動作を確認する手順は [ハンズオン](hands-on.md) にあります。
 
-## 作られるもの
+## 作成するリソース
 
 | 場所 | リソース | 役割 | 定義 |
 |---|---|---|---|
-| Google Cloud | Pub/Sub トピック | シンクの送り先。メッセージ保持は設定しない | `terraform/gcp.tf` |
+| Google Cloud | Pub/Sub トピック | シンクの送信先。メッセージ保持は設定しない | `terraform/gcp.tf` |
 | Google Cloud | Log Router のシンク | プロジェクトの全ログをトピックへ送る | `terraform/gcp.tf` |
-| Google Cloud | トピックの IAM | シンクの書き込み用 ID に公開の権限を付ける | `terraform/gcp.tf` |
+| Google Cloud | トピックの IAM | シンクの書き込み用 ID にメッセージの公開権限を付与する | `terraform/gcp.tf` |
 | Google Cloud | カスタムロールとサービスアカウント、鍵 | ClickPipes がトピックを読み、管理サブスクリプションを作る | `terraform/gcp.tf` |
 | ClickHouse Cloud | データベース `gcl` のテーブルと MV | L0、L1、MV1、L3（分単位の件数）、ノイズの件数 | `sql/10`〜`sql/50` |
 | ClickHouse Cloud | ClickPipe | トピックを L0 に取り込む | `terraform/clickhouse.tf` |
 | ClickStack | ログソースとダッシュボード | L1 を検索・可視化する（任意） | `terraform/clickstack.tf` |
 
-テーブルと MV は、Terraform の中から `tools/chq.py` で `sql/` のファイルを流して作ります。
-ClickHouse の Terraform プロバイダには DDL を流すリソースがないためです。
-どの文も `CREATE ... IF NOT EXISTS` なので、流し直しても既存のテーブルは変わりません。
+テーブルと MV は、Terraform から `tools/chq.py` を呼び出し、`sql/` のファイルを実行して作成します。
+ClickHouse の Terraform プロバイダには DDL を実行するリソースがないためです。
+どの文も `CREATE ... IF NOT EXISTS` なので、再実行しても既存のテーブルは変わりません。
 
 ## 前提
 
 - ClickHouse Cloud のサービス（26.6 以降）。トピックのメッセージを保存するリージョンと同じリージョンに置きます。
 - ClickHouse Cloud の API キー（書き込みができる権限）と組織 ID。
 - Google Cloud のプロジェクトで、トピック、シンク、サービスアカウント、カスタムロール、IAM を作れる権限。
-- 手元に Terraform 1.5 以降、`gcloud`、`python3`、`clickhousectl`。
+- ローカル環境に Terraform 1.5 以降、`gcloud`、`python3`、`clickhousectl`。
 - サービスアカウントの鍵の作成を組織のポリシー（`iam.disableServiceAccountKeyCreation`）で禁止している場合は、許可された手順で作った鍵ファイルを用意します（`service_account_key_file`）。
 
 ## 手順
@@ -58,11 +58,11 @@ cp terraform.tfvars.example terraform.tfvars
 | `gcp_project_id` | ― | ログを送るプロジェクト |
 | `clickhouse_service_id` | ― | 取り込み先のサービス |
 | `sink_filter` | プロジェクトの全ログ | 種類の絞り込みは ClickHouse 側で行うので、通常は変えない |
-| `sink_exclusions` | なし | 量が多く ClickHouse で検索しないノイズを、シンクで落とすとき |
+| `sink_exclusions` | なし | 量が多く ClickHouse で検索しないノイズを、シンクで除外する場合 |
 | `topic_storage_regions` | 制限なし | ClickHouse Cloud と同じリージョンに固定するとき |
-| `landing_ttl_days` | 7 | 取り込みの遅れ＋切り替えとバックフィル＋照合とロールバックに余裕を足す |
-| `logs_ttl_days` | 400 | ログの保持の要件 |
-| `pipe_replicas` など | 1 レプリカ、最小の大きさ | 取り込みの量と遅延を測って増やす |
+| `landing_ttl_days` | 7 | 取り込みの遅延、切り替えとバックフィル、照合とロールバックに必要な期間に余裕を加える |
+| `logs_ttl_days` | 400 | ログの保持要件 |
+| `pipe_replicas` など | 1 レプリカ、最小サイズ | 取り込み量と遅延を測って増やす |
 | `clickstack_connection_id` | なし | ClickStack のソースとダッシュボードを作るとき（下の 4） |
 
 ### 3. 適用
@@ -76,22 +76,22 @@ terraform apply
 適用の順番は次のとおりです。
 
 1. トピック、シンク、IAM、サービスアカウントを作る。
-2. `sql/10`〜`sql/50` を流して、テーブルと MV を作る（`apply_schema = false` なら飛ばす）。
+2. `sql/10`〜`sql/50` を実行し、テーブルと MV を作成する（`apply_schema = false` の場合はスキップする）。
 3. 既存の L0 を宛先にして ClickPipe を作る。
 
-サービスアカウントの鍵を Terraform で作ると、鍵は Terraform の state に入ります。
-state は鍵と同じ扱いで保管します。
+サービスアカウントの鍵を Terraform で作ると、鍵は Terraform の state に保存されます。
+state も鍵と同等の機密情報として保管します。
 
 ### 4. ClickStack のソース（任意）
 
 ClickStack の Team Settings の Connections で、このサービスへの接続の ID を調べます。
-`terraform.tfvars` に `clickstack_connection_id` を入れて、もう一度適用すると、L1 のログソースと例のダッシュボードができます。
+`terraform.tfvars` に `clickstack_connection_id` を入れて、もう一度適用すると、L1 のログソースとサンプルのダッシュボードが作成されます。
 
 ```bash
 terraform apply -var clickstack_connection_id=<connection id>
 ```
 
-### 5. 確かめる
+### 5. 動作を確認する
 
 ```bash
 terraform output clickpipe_state   # Running
@@ -102,25 +102,26 @@ python3 tools/chq.py verify/checks.sql
 ```
 
 シンクから届いたログが L0 と L1 に入っていれば、取り込みは動いています。
-定期的に見る項目は [運用](operations.md) の「日常の確認」にあります。
+定期的な確認項目は [運用](operations.md) の「日常の確認」にあります。
 
-## 本番のログへ切り替える流れ
+## 本番ログへ切り替える流れ
 
-Pub/Sub へのシンクを足し、並走させてから `_Default` への保存を止めます。
+Pub/Sub へのシンクを追加し、並走させてから `_Default` への保存を止めます。
 
 1. 並走：Pub/Sub へのシンクを追加し、`_Default` への保存も続ける。
 2. 突き合わせ：シンクの送出件数と ClickHouse の取り込み件数を比べ、ClickStack で日常の検索ができることを確かめる。
-3. 棚卸し：`_Default` に保存されたログに頼っている機能を洗い出し、ClickStack へ移すか、そのログだけ `_Default` に残すかを決める（[設計](design.md) の「_Default バケットへの保存を止めると変わるもの」）。
+3. 棚卸し：`_Default` に保存されたログを利用する機能を洗い出し、ClickStack へ移すか、そのログだけ `_Default` に残すかを決める（[設計](design.md) の「_Default バケットへの保存を止めると変わるもの」）。
 4. 切り替え：`_Default` のシンクに除外フィルタを入れるか、シンクを無効にして、新しいログを `_Default` に入れないようにする。フィルタを外せば戻せる。
 
 `_Default` のシンクは、このリポジトリの Terraform では管理しません。
-切り替えは利用者の環境の手順で行います。
+切り替えは利用者の環境で定めた手順で行います。
 
-## clickhousectl と gcloud で作る（Terraform を使わない場合）
+## clickhousectl と gcloud で構築する（Terraform を使わない場合）
 
 Terraform を使えない環境では、`cli/deploy.sh` が `gcloud` と `clickhousectl` で同じ構成を作ります。
 リソースの名前と既定値は Terraform と同じです。
-各手順はすでにあるものを飛ばすので、途中で失敗しても、直してから同じコマンドで流し直せます。
+各手順では、既存のリソースの作成をスキップします。
+途中で失敗しても、原因を解消してから同じコマンドを再実行できます。
 
 ```bash
 cp cli/env.example cli/.env      # GCP_PROJECT_ID と CH_SERVICE_ID を入れる
@@ -134,15 +135,15 @@ cli/deploy.sh
 スクリプトは次の順に進み、最後にパイプが Running になるのを待ちます。
 
 1. Pub/Sub トピック（メッセージ保持なし）
-2. Log Router のシンクと、その書き込み用 ID へのトピックの公開の権限
+2. Log Router のシンクと、その書き込み用 ID に対するトピックへのメッセージ公開権限
 3. ClickPipes 用のカスタムロール、サービスアカウント、鍵ファイル（`KEY_FILE` が既にあれば作らない）
 4. `sql/10`〜`sql/50` のテーブルと MV（`tools/chq.py`）
 5. ClickPipe（既存の L0 を宛先にする）
 
-- 鍵ファイルは、トピックを読む権限そのものです。パスワードと同じ扱いで保管します。
+- 鍵ファイルは、トピックの読み取りに使う認証情報です。パスワードと同等の機密情報として保管します。
 - 組織のポリシーで鍵の作成が禁止されている場合は、許可された手順で作った鍵を `KEY_FILE` に指定します。
 - ClickStack のソースは、下の「ClickStack のソース」の項目を画面で設定します（入力は 1 画面です）。
-- 削除は `cli/destroy.sh` です。ClickHouse のデータベースは `DROP_DATABASE=1` を付けたときだけ消します。削除したカスタムロールの ID は数週間再利用できないので、`cli/deploy.sh` は削除済みのロールを復元して使います。
+- 削除は `cli/destroy.sh` です。ClickHouse のデータベースは `DROP_DATABASE=1` を指定した場合にのみ削除します。削除したカスタムロールの ID は数週間再利用できないので、`cli/deploy.sh` は削除済みのロールを復元して使います。
 
 スクリプトが実行するコマンドは、次の節のとおりです。
 
@@ -191,7 +192,7 @@ python3 tools/chq.py --var LANDING_TTL_DAYS=7 --var LOGS_TTL_DAYS=400 --var MV_D
 ```
 
 `tools/chq.py` は Query API を使うので、30 秒を超える文は応答がタイムアウトします（サーバー側では実行が続きます）。
-大きなバックフィルは `clickhouse client` のネイティブ接続で流します。
+大量のデータをバックフィルする場合は、`clickhouse client` のネイティブ接続で実行します。
 
 ### ClickPipe
 
@@ -205,7 +206,7 @@ clickhousectl cloud clickpipe create pubsub "$CH_SERVICE_ID" \
 ```
 
 パイプが作る管理サブスクリプションは `clickpipes-<パイプ ID>` という名前で、保持 7 日、ack 期限 60 秒、順序付けが有効です。
-自分では作りません。
+利用者が作成する必要はありません。
 
 ### ClickStack のソース
 
@@ -230,12 +231,12 @@ clickhousectl cloud clickpipe create pubsub "$CH_SERVICE_ID" \
 }
 ```
 
-## 片付け
+## リソースの削除
 
 ```bash
 terraform destroy
 ```
 
-- ClickPipe を削除すると、管理サブスクリプションも消えます。
-- `sql/` で作ったデータベース `gcl` は Terraform の管理外なので残ります。不要なら `DROP DATABASE gcl` で消します。
-- 止めただけのパイプは管理サブスクリプションを残し、メッセージが溜まり続けます。使わないパイプは削除します。
+- ClickPipe を削除すると、管理サブスクリプションも削除されます。
+- `sql/` で作ったデータベース `gcl` は Terraform の管理外なので残ります。不要なら `DROP DATABASE gcl` で削除します。
+- 止めただけのパイプは管理サブスクリプションを残し、メッセージが蓄積し続けます。使わないパイプは削除します。
