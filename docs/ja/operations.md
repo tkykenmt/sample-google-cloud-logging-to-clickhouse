@@ -224,7 +224,7 @@ gcloud logging operations describe <operation id> --location=global --project=<p
 - 書き出したファイルは、シンクが送るのと同じ LogEntry の JSON が 1 行に 1 件ずつ並んだ形だった。MV1 の解析をそのまま使える。
 - 3 時間分（15 万件、116 MB）の書き出しに 76 分かかった（うち 10 分は実行待ち）。書き出しは時間がかかるので、期間を分けて先に始めておく。
 - 取り込みは 1 時間分あたり 2.5 秒だった。取り込んだ行はすべて、同じ時間帯にシンク経由で入った L1 の行と一致した。
-- `_Default` から書き出すと、`_Required` にだけ保存される Admin Activity と System Event の監査ログは含まれない。それらも必要なら `_Required` からも書き出す（`_Required` から書き出せるかは確かめていない）。
+- `_Default` から書き出すと、`_Required` にだけ保存される Admin Activity と System Event の監査ログは含まれない。それらも必要なら `_Required` からも書き出す（`gcloud logging copy _Required ...`）。検証では 10 分ぶんで 16,300 件、23 MB、約 48 分かかり、9 割が Kubernetes の Lease 更新だった。ノイズとして L1 から外すログは、書き出しのフィルタで除くと量も時間も減る（件数も残さない場合）。
 
 注意点：
 
