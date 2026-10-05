@@ -42,6 +42,7 @@ python3 tools/chq.py verify/checks.sql
 | 型、ORDER BY、パーティション、エンジンを変える | 付録 A3 | `sql/runbooks/03_blue_green.sql` | 不要 |
 | パイプの設定を変える（作成後に変えられないもの） | 付録 A4 | `sql/runbooks/04_pipe_swap.sql` | 不要（並走） |
 | `_publish_time` を持たない既存の取り込みから移る | 付録 A5 | `sql/runbooks/06_migrate_legacy_pipeline.sql` | 不要（並走） |
+| シンクを作る前に Cloud Logging に保存されていたログも入れる | 既存ログのバックフィル（任意） | `sql/runbooks/10_backfill_from_gcs.sql` | 不要 |
 
 多くの手順で「境界時刻 T」を使います。
 T は `_publish_time`（Pub/Sub の公開時刻）で決め、作業時刻の数分先にします。
@@ -199,6 +200,37 @@ L0 を短くすると、作り直しと照合ができる範囲（付録 A2〜A5
 
 複数のプロジェクトのログをまとめる場合は、シンクを組織かフォルダに作り、`includeChildren` を有効にします（[集約シンク](https://cloud.google.com/logging/docs/export/aggregated_sinks)）。
 このリポジトリの Terraform はプロジェクトのシンクだけを作ります。
+
+## 既存ログのバックフィル（任意）
+
+シンクとパイプが運ぶのは、シンクを作った後に届いたログだけです。
+それより前に Cloud Logging のログバケットに保存されていたログが ClickHouse でも必要な場合は、Cloud Storage を経由して入れます。
+一時的に別のパイプを作っても、過去のログは Pub/Sub に残っていないので取り込めません。
+
+1. 東京など ClickHouse Cloud と同じリージョンに Cloud Storage のバケットを作る。
+2. `gcloud logging copy` でログバケットから書き出す（[公式資料](https://cloud.google.com/logging/docs/routing/copy-logs)）。フィルタで期間と種類を絞れる。実行する人に `roles/logging.admin` と、書き出し先への `roles/storage.objectCreator` が要る。
+3. バケットに `roles/storage.objectViewer` を持つサービスアカウントの HMAC キーを作る（ClickHouse の `gcs()` 関数は HMAC キーで読む）。
+4. `sql/runbooks/10_backfill_from_gcs.sql` で、書き出したファイルを確かめてから、受信時刻の範囲ごとに L0 へ入れる。L0 に入れるので、MV1、ノイズの集計、分単位の集計の MV がふだんの取り込みと同じように動く。
+5. 件数を突き合わせ、作業が終わったら HMAC キーとバケットを削除する。
+
+```bash
+gcloud logging copy _Default storage.googleapis.com/<bucket> --location=global \
+  --log-filter='timestamp>="2026-10-01T00:00:00Z" AND timestamp<"2026-10-04T00:00:00Z"' --project=<project>
+gcloud logging operations describe <operation id> --location=global --project=<project>   # state, logEntriesCopiedCount
+```
+
+検証の結果（[検証記録](findings.md) の「既存ログのバックフィル」）：
+
+- 書き出したファイルは、シンクが送るのと同じ LogEntry の JSON が 1 行に 1 件ずつ並んだ形だった。MV1 の解析をそのまま使える。
+- 3 時間分（15 万件、116 MB）の書き出しに 76 分かかった（うち 10 分は実行待ち）。書き出しは時間がかかるので、期間を分けて先に始めておく。
+- 取り込みは 1 時間分あたり 2.5 秒だった。取り込んだ行はすべて、同じ時間帯にシンク経由で入った L1 の行と一致した。
+- `_Default` から書き出すと、`_Required` にだけ保存される Admin Activity と System Event の監査ログは含まれない。それらも必要なら `_Required` からも書き出す（`_Required` から書き出せるかは確かめていない）。
+
+注意点：
+
+- **シンクの開始時刻の前後**は、シンクから届いた行と重なる。その範囲だけ、L0 にある LogEntry の識別子と突き合わせて除く（runbook の Step 4）。L1 ではなく L0 と突き合わせるのは、ノイズの行が L1 に入らないため。突き合わせないと、ローカルの検証で L1 に 319 件の重複が出て、ノイズの件数も 81 件増えた。
+- **L0 の TTL を過ぎた古いログ**は、L0 に書かれて MV も動くが、直後に TTL の処理でパートごと消える（Cloud 26.6 では INSERT の 0.1 秒後、clickhouse local 26.7 では 3 秒以内。MV の宛先には全行が入った）。そのため、バックフィルした範囲の作り直しに L0 は使えない。確認が済むまで Cloud Storage のファイルを残し、作り直すときはそこから入れ直す。
+- 取り込んだ行の `MessageId` は空、`PublishTime` は `receiveTimestamp` になる（付録 A5 と同じ扱い）。
 
 ## リソースの削除
 

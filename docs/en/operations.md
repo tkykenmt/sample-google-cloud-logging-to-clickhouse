@@ -42,6 +42,7 @@ python3 tools/chq.py verify/checks.sql
 | Change types, ORDER BY, partitioning, or engine | Appendix A3 | `sql/runbooks/03_blue_green.sql` | No |
 | Change pipe settings that cannot be edited after creation | Appendix A4 | `sql/runbooks/04_pipe_swap.sql` | No (run in parallel) |
 | Move from an existing pipeline without `_publish_time` | Appendix A5 | `sql/runbooks/06_migrate_legacy_pipeline.sql` | No (run in parallel) |
+| Also load logs stored in Cloud Logging before the sink existed | Backfilling existing logs (optional) | `sql/runbooks/10_backfill_from_gcs.sql` | No |
 
 Many procedures use a boundary time T.
 T is a `_publish_time` (Pub/Sub publish time) a few minutes after the work starts.
@@ -194,6 +195,37 @@ Make the switch with the procedure defined in your environment.
 
 To collect logs from several projects, create the sink on the organization or folder with `includeChildren` ([aggregated sinks](https://cloud.google.com/logging/docs/export/aggregated_sinks)).
 This repository's Terraform creates a project sink only.
+
+## Backfilling existing logs (optional)
+
+The sink and the pipe carry only logs received after the sink was created.
+If ClickHouse also needs logs stored in Cloud Logging buckets before that, load them through Cloud Storage.
+A temporary extra pipe cannot do it: past logs are not in Pub/Sub.
+
+1. Create a Cloud Storage bucket in the same region as the ClickHouse Cloud service (for example Tokyo).
+2. Copy from the log bucket with `gcloud logging copy` ([docs](https://cloud.google.com/logging/docs/routing/copy-logs)); a filter narrows the period and log kinds. The person running it needs `roles/logging.admin` and `roles/storage.objectCreator` on the destination.
+3. Create an HMAC key for a service account with `roles/storage.objectViewer` on the bucket (the ClickHouse `gcs()` function reads with HMAC keys).
+4. With `sql/runbooks/10_backfill_from_gcs.sql`, check the copied files, then insert them into L0 by receive-time range. Inserting into L0 makes MV1, the noise MV and the rollup MV run exactly as for live logs.
+5. Reconcile the counts, then delete the HMAC key and the bucket.
+
+```bash
+gcloud logging copy _Default storage.googleapis.com/<bucket> --location=global \
+  --log-filter='timestamp>="2026-10-01T00:00:00Z" AND timestamp<"2026-10-04T00:00:00Z"' --project=<project>
+gcloud logging operations describe <operation id> --location=global --project=<project>   # state, logEntriesCopiedCount
+```
+
+Results in testing ([Findings](findings.md), "Backfilling existing logs"):
+
+- The copied files held one LogEntry JSON per line, the same shape the sink publishes, so MV1 parses them as is.
+- Copying 3 hours (151k entries, 116 MB) took 76 minutes, 10 of them queued. Copies are slow: split the period and start them early.
+- Inserting took 2.5 s per hour of logs. Every backfilled row matched a row the sink had delivered to L1 for the same window.
+- A copy from `_Default` leaves out the Admin Activity and System Event audit logs stored only in `_Required`. Copy from `_Required` too if you need them (copying from `_Required` was not tested).
+
+Cautions:
+
+- **Around the sink's start**, copied entries overlap with what the sink delivered. For that range only, skip LogEntry identities already in L0 (Step 4 of the runbook). L0, not L1, because noise rows never reach L1. Without it, a local test duplicated 319 rows in L1 and grew the noise counts by 81.
+- **Logs older than the L0 TTL** are written to L0 and the MVs run, but the TTL drop removes those parts right after (Cloud 26.6: 0.1 s after the insert; clickhouse local 26.7: within 3 s; the MV target got every row). L0 therefore cannot rebuild the backfilled range: keep the Cloud Storage files until the backfill is verified and re-insert from them instead.
+- Backfilled rows have an empty `MessageId` and `PublishTime` = `receiveTimestamp` (as in appendix A5).
 
 ## Cleanup
 

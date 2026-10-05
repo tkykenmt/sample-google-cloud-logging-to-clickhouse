@@ -314,7 +314,29 @@ The sink filter was replaced with one that matches no real logs after the screen
 | ClickStack source | Saved with the optional fields set as in Terraform; タイムアウト ("timeout") returned 42 rows. The GCE ServiceName was the VM name |
 | Removal | After deleting the pipe and confirming its managed subscription was gone, the sink, topic, role binding, service account, role and service were deleted |
 
+## Backfilling existing logs (2026-10-05)
+
+The "Backfilling existing logs" procedure in [Operations](operations.md) and `sql/runbooks/10_backfill_from_gcs.sql` were tried on 3 hours of the test project's `_Default` bucket (2026-10-04 00:00 to 03:00 UTC).
+The destination was a separate database with no pipe.
+The same window had also reached the main L1 through the sink, so the two were compared row by row.
+
+| Item | Result |
+|---|---|
+| Copy (`entries:copy`) | 151,192 entries, 48 files, 116 MB. 76 minutes from start to finish (10 queued). Progress seemed stuck at 71% for over 30 minutes, and no file appeared until just before completion |
+| File layout | `<log id>/YYYY/MM/DD/<time range>_copy_log_entries_..._S0.json`, one file per hour. One LogEntry JSON per line, the same shape the sink publishes |
+| Read check (runbook Step 2) | 151,192 lines, equal to the copy count. 0 lines that are not JSON, 0 duplicate LogEntry identities |
+| Insert into L0 (`gcs()`, HMAC key) | Four one-hour chunks of receive time, 1.5 to 2.6 s each. L0 = L1 = L3 total = 151,192, 0 duplicates. Noise 0 (Lease updates go to `_Required`) |
+| Comparison with the main L1 | 0 backfilled rows missing from the main L1. The 32,379 rows only in the main L1 were 32,376 Admin Activity and 3 System Event audit logs, both stored only in `_Required` |
+| HMAC key | `system.query_log` kept the key ID; the secret was `[HIDDEN]` |
+
+The boundary handling and rows older than the L0 TTL were checked on clickhouse local 26.7:
+
+- 3,000 synthetic entries with the boundary in the middle of the receive times: the part after it was inserted as the pipe would, the rest with Steps 3 and 4 of the runbook. L1 (2,364) plus the noise counts (636) made 3,000, with 0 duplicate LogEntry identities. Without the L0 check of Step 4, 319 rows were duplicated in L1 and the noise counts grew by 81.
+- 10 rows dated 20 days ago in a table set up like L0 (7-day TTL, `ttl_only_drop_parts = 1`): 10 right after the insert, 0 after 3 s; they stayed with background merges stopped. The MVs run on the INSERT, so L1 got them.
+- On Cloud 26.6 with the same table and an MV, `system.part_log` showed a `TTLDropMerge` 0.1 s after the inserted part (10 rows), and the MV target had all 10 rows.
+
 ## Not tested
 
+- Copying from the `_Required` bucket
 - Replicas needed at tens of MB/s
 - Real logs from sources other than GKE (such as Cloud Run request logs); synthetic logs were used instead
