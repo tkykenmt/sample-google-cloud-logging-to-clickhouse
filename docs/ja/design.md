@@ -8,7 +8,8 @@ Google Cloud Logging（以下 Cloud Logging）のログを Pub/Sub と ClickPipe
 
 > 本書の挙動は ClickHouse Cloud 26.6 と Pub/Sub ClickPipes（Private Preview）で確かめたものです。
 > Private Preview の機能は、一般提供（GA）までに挙動や料金が変わることがあります。
-> 「（確認済み）」は実機で確かめた挙動、「（公式資料）」は公式の資料による記述、「（PoC で確認）」は利用者の環境で確かめる項目を表します。
+> 「（確認済み）」は実機で確かめた挙動、「（公式資料）」は公式の資料による記述（リンク先が出典）、「（PoC で確認）」は利用者の環境で確かめる項目を表します。
+> 料金と仕様は 2026-10-05 に公式資料で確かめた値です。
 > 測定の条件と数値は [検証記録](findings.md) にあります。
 
 導入の手順は [導入](setup.md)、手元と実環境で動かす手順は [ハンズオン](hands-on.md)、運用の手順は [運用](operations.md) にあります。
@@ -91,7 +92,7 @@ L2 は任意です。
 | 保持期間、閲覧権限、削除の扱いを種類ごとに分けたい | なし（L2 で分ける） |
 | 重複を除いた結果や、最新の状態だけが欲しい | 検索時に `LIMIT 1 BY` を使う |
 
-- L1 の読み取り量は、対象期間の行数でほぼ決まります。参考までに、1 日 約 110 万行の環境では、L1 から取り出す 1 日分の表が 0.16 秒、9 日分（1,894 万行）が 0.6 秒でした。同じ表を型付きテーブルから作ると 13 ms でした。（確認済み）
+- L1 の読み取り量は、対象期間の行数でほぼ決まります。参考までに、L1 から取り出す表は、1 日分（110 万行）が 0.16 秒、9 日分（1,894 万行）が 0.6 秒でした。同じ表を型付きテーブルから作ると 13 ms でした。（確認済み）
 - 一度きりの調査、量の少ないログ、内容の形式が安定していないログには、L2 を作りません。
 - L3 は、長期間の推移を示すグラフを高速化したい場合や、個々のログより集計結果を長く保持したい場合に追加します。
 
@@ -103,11 +104,13 @@ L2 と L3 の作り方は [運用](operations.md) にあります。
 
 | 要素 | 料金（公式資料） | 課金対象 |
 |---|---|---|
-| Cloud Logging の取り込み（削減対象） | $0.50/GiB | `_Default` に入れなくなるログの量 |
-| Pub/Sub の公開 | $40/TiB（毎月最初の 10 GiB は無料） | シンクの送出量 |
+| Cloud Logging の取り込み（削減対象） | $0.50/GiB（[料金](https://cloud.google.com/stackdriver/pricing)。プロジェクトごとに毎月 50 GiB まで無料） | `_Default` に入れなくなるログの量 |
+| Pub/Sub の公開 | $40/TiB（[料金](https://cloud.google.com/pubsub/pricing)） | シンクの送出量 |
 | Pub/Sub の配信 | $40/TiB（サブスクリプションごと） | シンクの送出量 × サブスクリプションの数 |
-| ClickPipes（Pub/Sub） | Private Preview の間は無料。GA 後の料金は未公表。他のストリーミング ClickPipes は、取り込み $0.04/GB とレプリカの時間料金 | 取り込み量、レプリカ数とサイズ |
+| ClickPipes（Pub/Sub） | Private Preview（[ClickPipes の一覧](https://clickhouse.com/docs/integrations/clickpipes)）。Preview 中と GA 後の料金は公開の料金表になく、ClickHouse に確認する。他のストリーミング ClickPipes は、取り込み $0.04/GB とレプリカの時間料金（[料金](https://clickhouse.com/docs/products/cloud/reference/billing/clickpipes/clickpipes-for-streaming-and-object-storage)） | 取り込み量、レプリカ数とサイズ |
 | ClickHouse Cloud | 料金ページのコンピュートとストレージ | サービスのサイズ、保存量（圧縮後） |
+
+Pub/Sub の無料枠は、公開と配信を合わせて請求先アカウントごとに毎月 10 GiB です。
 
 **並走中に測るもの**
 
@@ -178,21 +181,21 @@ PoC の前に、次のことを利用者の環境で決めておきます。
 **シンク**
 
 - 1 プロジェクトなら、シンクのフィルタを `logName:"projects/<project>/logs/"` にしてプロジェクトの全ログを送ります。種類の絞り込みは ClickHouse 側で行います。
-- 複数のプロジェクトをまとめるなら、組織またはフォルダに集約シンク（aggregated sink）を作ります。L1 では `ProjectId` で絞り込めます。
-- シンクはそれぞれ独立にログを評価するので、Pub/Sub へのシンクを追加しても、既存の `_Default` バケットへの保存はそのまま続きます。Log Router の転送そのものに料金はかかりません。（公式資料）
+- 複数のプロジェクトをまとめるなら、組織またはフォルダに集約シンク（[aggregated sink](https://cloud.google.com/logging/docs/export/aggregated_sinks)）を作ります。L1 では `ProjectId` で絞り込めます。
+- シンクはそれぞれ独立にログを評価するので、Pub/Sub へのシンクを追加しても、既存の `_Default` バケットへの保存はそのまま続きます。Log Router の転送そのものに料金はかかりません。（公式資料：[ルーティングの概要](https://cloud.google.com/logging/docs/routing/overview)）
 
 **_Default バケットへの保存を止めると変わるもの**
 
-| 機能 | 保存を止めた後（公式資料） |
+| 機能 | 保存を止めた後（公式資料：[ルーティングの概要](https://cloud.google.com/logging/docs/routing/overview)、[ログベースのアラート](https://cloud.google.com/logging/docs/alerting/log-based-alerts)） |
 |---|---|
 | Error Reporting | ログバケットに保存されたログしか解析しないので、止めたログのエラーは集計されない |
 | ログエクスプローラなど Cloud Logging の検索と分析の機能 | 止めたログは検索できない |
 | システムのログベース指標 | 保存されたログだけを数えるので、止めたログは数えられない |
 | `_Default` バケットに定義したログベース指標 | バケットに入らないログは数えられない |
 | プロジェクト単位のユーザー定義のログベース指標 | 除外したログも数え続ける。この指標に付けたアラートも動く |
-| ログの一致を条件にしたアラート | PoC で確認 |
+| ログの一致を条件にしたアラート（ログベースのアラート） | 除外したログには動かない |
 
-料金の前提（公式資料）：ログバケットへの取り込みは $0.50/GiB（30 日分の保管を含む）、30 日を超える保持は $0.01/GiB・月です。
+料金の前提（公式資料：[料金](https://cloud.google.com/stackdriver/pricing)）：ログバケットへの取り込みは $0.50/GiB（30 日分の保管を含む）、30 日を超える保持は $0.01/GiB・月です。
 `_Required` バケット（Admin Activity の監査ログなど）は保持 400 日固定で料金がかからず、シンクの無効化も変更もできません。
 
 **過去のログ**
@@ -212,7 +215,7 @@ ClickHouse は、他のログと合わせて分析するための写しとして
 
 **トピック**
 
-- メッセージ保持は既定で有効にしません。保持を有効にすると、公開された全メッセージに保持期間分の保管料（$0.27/GiB・月）がかかります。（公式資料）
+- メッセージ保持は既定で有効にしません。保持を有効にすると、公開された全メッセージに保持期間分の保管料（$0.27/GiB・月）がかかります。（公式資料：[保管料](https://cloud.google.com/pubsub/pricing#storage_costs)）
 - 再処理に使う元データは L0 に保存しています。トピックの保持が必要なのは、パイプの差し替えで過去の時刻へ遡るときだけです。その場合も、新しいパイプを境界時刻より前に作れば遡る必要はありません。
 - 遡る作業をするときは、作業の前に短い保持（例：1 日）を有効にし、終わったら外します。保持を有効にする前のメッセージには遡れません。
 - Pub/Sub は少なくとも 1 回の配信なので、同じメッセージが二重に届くことがあります。重複は `MessageId` で見分けます。
@@ -222,16 +225,17 @@ ClickHouse は、他のログと合わせて分析するための写しとして
 - 形式は JSONEachRow、宛先は既存の L0 です。`_raw_message`、`_message_id`、`_publish_time`、`_attributes` の仮想列だけを対応付けます。
 - 開始位置は、作成時に latest、earliest、timestamp から選べます。（確認済み）
 - 権限は「Only destination table」で足ります。MV が `SQL SECURITY DEFINER` 付きであることが条件です。（確認済み）
-- 管理サブスクリプションは `clickpipes-<パイプ ID>` という名前で、トピックと同じプロジェクトに自動で作られます。保持 7 日、ack 期限 60 秒、順序付けが有効で、使われないまま 31 日たつと失効します。パイプを削除すると消え、停止しただけでは残ります。（確認済み）
-- 管理サブスクリプションの未処理のメッセージは、公開から 1 日以内なら保管料がかかりません。取り込みが 1 日を超えて止まると、滞留に保管料がかかり始めます。（公式資料）
+- 管理サブスクリプションは `clickpipes-<パイプ ID>` という名前で、トピックと同じプロジェクトに自動で作られます。保持 7 日、ack 期限 60 秒、順序付けが有効です（[公式資料](https://clickhouse.com/docs/integrations/clickpipes/pubsub/overview)）。使われないまま 31 日たつと失効し（Pub/Sub の既定の有効期限）、パイプを削除すると消え、停止しただけでは残ります。（確認済み）
+- 管理サブスクリプションの未処理のメッセージは、公開から 1 日以内なら保管料がかかりません。取り込みが 1 日を超えて止まると、滞留に保管料がかかり始めます。（公式資料：[保管料](https://cloud.google.com/pubsub/pricing#storage_costs)）
 - パイプは約 5 秒ごとに INSERT します。公開から格納までは中央値 3 秒前後、p99 で約 5 秒でした。（確認済み）
 - レプリカは既定の 1 つ（最小サイズ）から始め、遅延を測りながらレプリカ数とサイズを増やします。（公式資料、量に応じた値は PoC で確認）
 
 **認証とネットワーク**
 
-- ClickPipes にはサービスアカウントの鍵ファイルを渡します。購読と管理サブスクリプションの作成・削除に必要な権限だけのカスタムロールを付け（`terraform/gcp.tf`）、鍵の保管とローテーションの担当を決めます。
+- ClickPipes にはサービスアカウントの鍵ファイルを渡します。認証の方法は鍵ファイルだけです。公式の最小権限ロール（7 つの権限、[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）をプロジェクト単位で付け（`terraform/gcp.tf`）、鍵の保管とローテーションの担当を決めます。
+- このロールは、プロジェクト内のトピックの一覧と、購読の作成、受信、削除を許します。ClickPipes は管理サブスクリプションのほかに、確認用の一時的な購読（`clickpipes-discovery-<uuid>`）も作るためです。範囲を狭めたい場合は、ログの送出専用のプロジェクトにトピックを置きます。
 - Pub/Sub が VPC Service Controls の境界の中にある場合、境界の外にある ClickPipes から読めるかを確かめます。（PoC で確認）
-- ClickHouse Cloud のサービスは、トピックのメッセージが保存されるリージョンと同じリージョンに置きます。リージョンをまたぐと、配信に転送料がかかります。（公式資料）
+- ClickHouse Cloud のサービスは、トピックのメッセージが保存されるリージョンと同じリージョンに置きます。リージョンをまたぐと、配信に転送料がかかります。（公式資料：[料金](https://cloud.google.com/pubsub/pricing)）
 
 ### L0：着地テーブル
 
@@ -248,7 +252,7 @@ LogEntry を `JSONExtract(_raw_message, 'Tuple(...)')` で 1 回だけ解析し�
 **時刻**
 
 - `Timestamp` は LogEntry の `timestamp` です。ない行は `_publish_time` で補います。
-- Cloud Logging は 24 時間先までの未来の時刻と、バケットの保持期間内の過去の時刻を受け付けるので、`Timestamp` は到着順に並びません。遅れて届いたログは過去の日付のパーティションに入ります。
+- Cloud Logging は 24 時間先までの未来の時刻と、バケットの保持期間内の過去の時刻を受け付けるので（[ルーティングの概要](https://cloud.google.com/logging/docs/routing/overview)）、`Timestamp` は到着順に並びません。遅れて届いたログは過去の日付のパーティションに入ります。
 - `ReceiveTimestamp`（Cloud Logging の受信時刻）と `PublishTime`（Pub/Sub の公開時刻）も持ちます。
 
 **ServiceName**
@@ -260,7 +264,7 @@ LogEntry を `JSONExtract(_raw_message, 'Tuple(...)')` で 1 回だけ解析し�
 | Cloud Run、Cloud Functions、App Engine | サービス名、関数名、モジュール名 |
 | GCE インスタンス | インスタンス名（ラベルがなければインスタンス ID） |
 | GKE のコントロールプレーン | `control-plane/`コンポーネント名 |
-| 上記以外 | リソースの種類/ログ名（例 `k8s_node/kubelet`） |
+| 上記以外 | リソースの種類/ログ ID（例 `k8s_node/kubelet`） |
 
 **本文（Body）**
 
@@ -272,7 +276,7 @@ LogEntry を `JSONExtract(_raw_message, 'Tuple(...)')` で 1 回だけ解析し�
 4. httpRequest があれば「メソッド ステータス URL」（ロードバランサのログなど）
 5. jsonPayload の JSON 全体
 6. 監査ログ以外の protoPayload は「[型名] 先頭部分」
-7. どれもなければ「[ログ名]」
+7. どれもなければ「[ログ ID]」
 
 本文と ServiceName には、どの種類のログでも空でない値が設定されます。（確認済み）
 
@@ -290,7 +294,7 @@ LogEntry を `JSONExtract(_raw_message, 'Tuple(...)')` で 1 回だけ解析し�
 | LogAttributes の `proto.type` | protoPayload の型（`@type`） |
 
 - `key="value"` の分解は、本文に `="` を含むすべての行に適用されます。意図しないキーが増える可能性があるので、対象を特定の ServiceName に絞ることを検討します。
-- 属性は Map 型にします。ClickStack の公式の推奨で、JSON 型は ClickStack ではベータであり、キーが少なく安定している場合向けとされています。（公式資料）
+- 属性は Map 型にします。ClickStack の公式の推奨で、JSON 型は ClickStack ではベータであり、キーが少なく安定している場合向けとされています。（公式資料：[Map と JSON](https://clickhouse.com/docs/clickstack/ingesting-data/schema/map-vs-json)）
 - jsonPayload に新しいキーを追加し続けるアプリでは、LogAttributes のキーが増え続けます。Map の保存形式は、マージ後の部分だけ `with_buckets`（キーごとに分けて保存）にします。1 行あたりのキーの平均が 32 個未満の部分は分割されず、従来の形式と同じになります。キーが増えた部分だけが、マージ時に自動で分割されます。（確認済み）
 - 強制的に分割すると、1 つのキーを読むクエリは速くなりますが、Map 全体を読むクエリと INSERT は遅くなり、保存量も増えます。平均 2〜12 個のキーのログでは、1 つのキーを読むクエリが 2〜3 割速く、Map 全体を読むクエリが 2.4 倍遅くなりました。平均が 32 個を超えるまでは強制しません。（確認済み）
 - よく絞り込むキーは、独立した列として保存することもできます。
@@ -338,7 +342,7 @@ L2 も L0 から読むので、同じ条件を書きます（`sql/examples/l2_au
 - 列名は ClickStack の OTel ログ形式に合わせます（Timestamp、ServiceName、SeverityText、Body、LogAttributes、ResourceAttributes など）。
 - 日付でパーティションを分け、並び順は `(toStartOfFiveMinutes(Timestamp), ServiceName, Timestamp)` にします。ClickStack の既定と同じです。
 - ログの種類ごとに保持期間を変えたい場合（監査ログは長く、アプリのログは短く）は、テーブルを分けるか、行ごとの TTL を使います。
-- 1 回の INSERT がまたげるパーティションは 100 までで、超えると INSERT が失敗します。遅れて届くログが多い環境では、取り込みの失敗を監視します。
+- 1 回の INSERT の 1 ブロックがまたげるパーティションは、既定で 100 までです。超えると INSERT が失敗します（[max_partitions_per_insert_block](https://clickhouse.com/docs/reference/settings/session-settings/max-partitions)）。遅れて届くログが多い環境では、取り込みの失敗を監視します。
 
 **日本語の検索**
 
@@ -362,6 +366,8 @@ ClickStack は、検索窓に入れた語を `hasAllTokens(lower(Body), lower('�
 - 日本語のログがある環境では、`lower(Body)` のインデックスを `ngrams(2)` にします。英語の語も同じ件数で検索できます。インデックスは単語単位の区切りの約 4.5 倍になります。
 - 1 つの式に付けられるテキストインデックスは 1 つまでなので、両方の区切り方を同時には使えません。
 - 1 文字だけの語は検索できません。1 文字で探すときは SQL の LIKE を使います。
+- 2 文字ずつの断片がすべて含まれていれば一致とみなすので、別の並びの文字列にも一致します。例えば「ムアウトタイム」を含む本文も「タイムアウト」に一致します。件数を厳密に数えるときは、LIKE で確かめます。（確認済み）
+- インデックスを使わずに実行すると（`use_skip_indexes = 0` を指定した場合など）、日本語の語は一致せず 0 件になりました（clickhouse local 26.7）。（確認済み）
 - 属性のインデックスは、ClickStack の既定スキーマと同じく、キーの一覧（`mapKeys`）と「キー=値」の組（`LogAttributeItems` などの ALIAS 列）に付けます。この列があると、ClickStack は属性の絞り込みを `has(LogAttributeItems, 'キー=値')` に変換し、このインデックスが使われます。（確認済み）
 
 ### L3：集計テーブル

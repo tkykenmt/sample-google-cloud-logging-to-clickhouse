@@ -177,7 +177,7 @@ Cloud Monitoring の `logging.googleapis.com/exports/log_entry_count`（シン�
 
 ## Pub/Sub の課金対象量
 
-料金表では、公開と配信のそれぞれに $40/TiB がかかります（毎月最初の 10 GiB は無料、1 リクエストあたり最低 1 KB）。
+[料金表](https://cloud.google.com/pubsub/pricing) では、公開と配信のそれぞれに $40/TiB がかかります（公開と配信を合わせて毎月 10 GiB までは無料、1 リクエストあたり最低 1 KB）。
 全ログを送るシンク 1 本と稼働中のパイプ 1 本で、3 時間の量を Cloud Monitoring で測りました。
 
 | 項目 | バイト数 | 指標 |
@@ -191,6 +191,7 @@ Cloud Monitoring の `logging.googleapis.com/exports/log_entry_count`（シン�
 - 料金に換算すると、Pub/Sub（公開と配信）は Cloud Logging の取り込み料の約 78% にあたった。
 - Cloud Logging が課金するログだけでは、Pub/Sub に送った JSON は課金対象の量の約 1.2 倍で、Pub/Sub の料金は取り込み料の約 2 割になる。
 - 配信側では ack（55.3 MB）と ack 期限の延長（179.8 MB）も byte_cost に計上された。これが課金されるかは確かめていない。
+- Lease 更新だけを 1 日分（2026-10-04、GKE クラスタ 2 つ）で数えると、210 万件、メッセージ本文の合計で 2.71 GiB だった。公開と配信の料金に換算すると月に約 $6.4、クラスタ 1 つあたり約 $3 になる（無料枠と 1 KB の最低課金を考えない概算）。集計された件数（`gcl_noise_1m_v1`）と L0 の同じ条件の行の数は、どちらも 2,103,762 件で一致し、L1 には 0 件だった。
 - 停止したパイプの管理サブスクリプションには、停止から 19 時間で 170 万件、2.3 GB が蓄積していた。公開から 1 日を超えた分には保管料がかかる。
 
 ## 属性の Map とインデックス（ClickStack の既定スキーマとの突き合わせ）
@@ -224,7 +225,7 @@ Cloud Monitoring の `logging.googleapis.com/exports/log_entry_count`（シン�
 - 境界時刻 T の 5 分前に、T 以降に公開されたデータだけを書き込む MV を作った。v2 の最初の行の公開時刻は T の 0.348 秒後で、T 以降の MessageId の数は v1 と一致した（1,813 件）。
 - T より前のデータは、v1 から 6 時間ごとの区間に分けてコピーし、区間ごとに件数の一致を確認した（合計 18,921,930 行）。件数確認が 1 回失敗して処理が停止したが、コピー前の確認だったため、その区間をスキップして再開できた。
 - 日ごとの件数、MessageId の重複数（641）、分単位の集計の合計は、v1 と v2 で一致した。
-- ClickStack のソースとビュー `cloudlogging.logs` を v2 に切り替えた。属性の絞り込み条件には `has(LogAttributeItems, ...)` が使われ、まれな値では 333 グラニュール中 1 まで絞れた。
+- ClickStack のソースと、名前を固定したビューを v2 に切り替えた。属性の絞り込み条件には `has(LogAttributeItems, ...)` が使われ、まれな値では 333 グラニュール中 1 まで絞れた。
 
 ## パーサ v7：共通項目は列に、個別の内容は属性に
 
@@ -237,10 +238,10 @@ v7 では特定のログ形式を前提にせず、列として定義しない�
 |---|---|---|---|
 | 監査ログ以外の protoPayload（App Engine、httpRequest あり） | モジュール名 | `GET 200 /items` | `http.responseSize`、`http.protocol`、`proto.type` |
 | 同上（httpRequest なし） | モジュール名 | `[google.appengine.logging.v1.RequestLog] {...}` | `proto.type` |
-| httpRequest と message のない jsonPayload（ロードバランサ風） | リソースの種類/ログ名 | `GET 503 https://...` | `http.responseSize`、`http.cacheHit`、`http.referer` |
-| 分割されたエントリ | リソースの種類/ログ名 | textPayload | `entry.split` |
+| httpRequest と message のない jsonPayload（ロードバランサ風） | リソースの種類/ログ ID | `GET 503 https://...` | `http.responseSize`、`http.cacheHit`、`http.referer` |
+| 分割されたエントリ | リソースの種類/ログ ID | textPayload | `entry.split` |
 | `otel`、`apphub`、`errorGroups`、`operation.first` を持つ | サービス名 | message | `entry.otel`、`entry.apphub`、`entry.errorGroups`、`operation.first` |
-| ペイロードなし | リソースの種類/ログ名 | `[ログ名]` | なし |
+| ペイロードなし | リソースの種類/ログ ID | `[ログ ID]` | なし |
 | 監査ログ | API のサービス名 | `サービス名 メソッド名` | `audit.*`、`proto.type` |
 
 v6 では、監査ログ以外の protoPayload は ServiceName が空、Body が空白 1 文字になっていた。
@@ -255,11 +256,11 @@ GKE のアップグレード通知の表（ノードプール、版、件数、�
 | 作り方 | 結果 | 時間 | 読んだ行 |
 |---|---|---|---|
 | L2（型付きテーブル） | 6 行 | 13 ms | 5.5 万行 |
-| L1（ログ名で絞る） | L2 と同じ 6 行 | 623 ms | 1,894 万行 |
+| L1（ログ ID で絞る） | L2 と同じ 6 行 | 623 ms | 1,894 万行 |
 | L1（ServiceName で絞る、1 日分） | ― | 159 ms | 110 万行 |
 
 - L1 の並び順の先頭は 5 分ごとの時刻なので、ServiceName で絞っても読み取り量はほとんど減らず、対象期間で決まる。
-- 検証環境の量（1 日 約 110 万行）なら、L1 だけでダッシュボードは十分に動く。読み取り量は対象期間の行数に比例する。
+- 読み取り量は対象期間の行数に比例する。1 日分（110 万行）なら 159 ms、9 日分（1,894 万行）でも 623 ms で、この規模なら L1 だけでダッシュボードは十分に動く。
 
 ## テキストインデックス
 
@@ -269,6 +270,7 @@ GKE のアップグレード通知の表（ノードプール、版、件数、�
 ## 構築手順（Terraform と cli/deploy.sh、2026-10-02）
 
 検証用のプロジェクトとサービスを使い、両方の手順でリソースの作成から削除までを実行しました。
+`cli/deploy.sh` と `cli/destroy.sh` はその後リポジトリから外し、同じコマンドを [ハンズオン](hands-on.md) の第 3 部に移しました。
 
 | 手順 | 結果 |
 |---|---|

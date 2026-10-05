@@ -22,7 +22,7 @@ Check the following regularly with `verify/checks.sql`.
 | Failed inserts | Check 6 | One or more | "Detecting and recovering MV failures" |
 | Ingest latency | Check 1 | p99 above 10 s and growing | Add pipe replicas. Also check the age of unacked Pub/Sub messages |
 | Duplicates | Check 3 | Increased after a failure or pause | Deduplicate in queries, or rebuild the day with appendix A2 |
-| Pipe state | `clickhousectl cloud clickpipe get` | Failed | "Detecting and recovering MV failures" |
+| Pipe state | `clickhousectl cloud clickpipe get <service id> <pipe id>` (pipe ID from `terraform output clickpipe_id`) | Failed | "Detecting and recovering MV failures" |
 
 ```bash
 export CH_SERVICE_ID=<service id>
@@ -71,11 +71,11 @@ The template for adding a rule is `sql/runbooks/07_add_noise_rule.sql`.
 
 - L0 keeps the raw rows for its retention, so a rule can be reverted by rebuilding from L0.
 - Counts remain, so a stop in the updates (a controller going down) is visible in a chart.
-- Pub/Sub and ClickPipes volume does not go down. For high-volume logs that also stay in Cloud Logging (such as `_Required`) and that you never search in ClickHouse, an exclusion filter on the sink is an option; then no counts remain either. In the test environment, Lease updates were 59% of the bytes sent to Pub/Sub, but only about $4 per cluster per month ([findings](findings.md)).
+- Pub/Sub and ClickPipes volume does not go down. For high-volume logs that also stay in Cloud Logging (such as `_Required`) and that you never search in ClickHouse, an exclusion filter on the sink is an option; then no counts remain either. In the test environment, Lease updates were 59% of the bytes sent to Pub/Sub, but only about $3 per GKE cluster per month ([Findings](findings.md), "Bytes that drive Pub/Sub cost").
 
 Switching a rule uses a `_publish_time` boundary T like the other procedures.
 The noise MV counts only rows with `_publish_time >= T`, and MV1 drops only rows with `_publish_time >= T`.
-In testing, the counts after the boundary (1,940) matched the matching rows in L0 (1,940), with zero in L1.
+For one day of the test environment (2026-10-04), the counted rows and the matching rows in L0 were both 2,103,762, with zero in L1.
 
 ### Normalization that applies to every log goes into MV1
 
@@ -138,7 +138,7 @@ When an MV threw an exception, the behavior was:
 4. After fixing the MV with `MODIFY QUERY`, the next retry delivered the batch to L1 with no loss and no duplicates.
 
 Point 4 holds because the block is deduplicated in L0 and still passed again to the dependent MVs.
-This comes from the ClickHouse Cloud default `deduplicate_blocks_in_dependent_materialized_views = 1`.
+This comes from the default value 1 of the setting `deduplicate_blocks_in_dependent_materialized_views` ([setting](https://clickhouse.com/docs/reference/settings/session-settings/other#deduplicate_blocks_in_dependent_materialized_views)).
 
 In testing, however, the pipe went Failed and stopped ingesting about 60 minutes after the first failure.
 Fixing the MV and restarting with `clickpipe start` lost nothing, but part of the stuck batch was written to L1 twice.
@@ -158,15 +158,48 @@ Blocks inserted between DROP and CREATE skip the MV and stay only in L0.
 | `EXCHANGE TABLES` on an MV's source | The MV followed the name and fired on inserts into the table that now had that name |
 | `RENAME TABLE` on an MV's source | Inserts into either the old or new name no longer fired the MV, with no error |
 
-Some ClickHouse versions also had a bug where MVs stopped firing after `EXCHANGE` ([ClickHouse#105021](https://github.com/ClickHouse/ClickHouse/issues/105021)).
+The 26.5 development line also had a bug where MVs stopped firing after `EXCHANGE` ([ClickHouse#105021](https://github.com/ClickHouse/ClickHouse/issues/105021), fixed).
 Use `EXCHANGE` only for read-only tables not connected to any MV or pipe.
 
 Also avoid dropping and recreating an MV (inserts in between skip it), reusing an MV's SELECT as is in `INSERT ... SELECT` (columns map by position and values shift), and rebuilding from L0 without deduplication (redeliveries return to L1).
+
+## Changing retention
+
+`landing_ttl_days` and `logs_ttl_days` are used only when the tables are created.
+To change them later, run `MODIFY TTL` per table and update `terraform.tfvars` to match.
+
+```sql
+ALTER TABLE gcl.gcl_landing_v1 MODIFY TTL toDateTime(_publish_time) + INTERVAL 14 DAY;
+ALTER TABLE gcl.gcl_logs_v1    MODIFY TTL toDateTime(Timestamp) + INTERVAL 400 DAY;
+ALTER TABLE gcl.gcl_logs_1m_v1 MODIFY TTL Minute + INTERVAL 400 DAY;
+ALTER TABLE gcl.gcl_noise_1m_v1 MODIFY TTL Minute + INTERVAL 400 DAY;
+```
+
+All tables use `ttl_only_drop_parts = 1`, so expired days are dropped as whole partitions.
+A shorter L0 also shortens the range you can rebuild and reconcile (appendix A2 to A5).
+
+## Switching production logs
+
+Setting up the pipeline does not change storage in the existing `_Default` bucket.
+Sinks evaluate logs independently, so adding the Pub/Sub sink does not stop `_Default` from storing them.
+To stop that storage, run both in parallel first, then switch.
+
+1. Parallel run: add the Pub/Sub sink and keep storing in `_Default`.
+2. Reconcile: compare the sink's export count with what ClickHouse ingested (loss on the path in "Daily checks"), and confirm that day-to-day searches work in ClickStack.
+3. Inventory: list the features that use logs stored in `_Default`, and decide for each whether it moves to ClickStack or whether those logs stay in `_Default` ([Design](design.md), "What changes when you stop storing logs in the _Default bucket").
+4. Switch: add an exclusion filter to the `_Default` sink or disable it, so new logs no longer go there. Removing the filter reverts it.
+
+This repository's Terraform does not manage the `_Default` sink.
+Make the switch with the procedure defined in your environment.
+
+To collect logs from several projects, create the sink on the organization or folder with `includeChildren` ([aggregated sinks](https://cloud.google.com/logging/docs/export/aggregated_sinks)).
+This repository's Terraform creates a project sink only.
 
 ## Cleanup
 
 - A stopped pipe keeps its managed subscription, which keeps accumulating messages. Delete pipes you no longer use.
 - Deleting a pipe leaves the destination table and the error table. Drop them separately if not needed.
+- Removing the whole deployment is described in "Removing the resources" in [Setup](setup.md).
 
 ## Appendix: rebuilding and switching L0 and L1 (recovery)
 
@@ -237,6 +270,7 @@ To change settings that cannot be edited after creation (such as a subscription 
 The new pipe creates a new subscription, which receives a copy of every message.
 
 Create the new pipe with start position latest before boundary time T2.
+With Terraform, add a copy of `clickhouse_clickpipe.gcl` with another name and destination table (`gcl_landing_v2`).
 A new subscription receives every message published after it is created, so nothing from T2 on is missed.
 
 Do not enable message retention on the Pub/Sub topic by default.
@@ -249,7 +283,9 @@ In that case, enable a short retention (for example one day) before the work and
 You cannot seek to messages published before retention was enabled.
 
 As with Blue/Green, boundary time T2 splits the work.
-Create an MV that feeds rows from T2 on from the new landing table, and narrow the old MV to rows before T2 with `MODIFY QUERY`.
+For every MV that reads the old landing table (MV1, the noise MV, any L2 MV), create one that feeds rows from T2 on from the new landing table, and narrow the old MV to rows before T2 with `MODIFY QUERY`.
+Moving only MV1 stops the noise counts and the L2 tables when the old pipe stops.
+In the template, `{{L1}}` is `gcl_logs_v1` right after setup and `gcl_logs_v2` after A3.
 After a seek, the replayed range contains duplicates (500 in testing), but they are all before T2 and are dropped by the boundary condition.
 
 Stop the old pipe only after the old landing table has passed T2 with no stuck batch.
@@ -267,7 +303,10 @@ On real logs, `receiveTimestamp` preceded the Pub/Sub publish time by 0.2 to 2.4
 4. While both run, compare the identity sets per receive hour and confirm the difference is zero.
 5. Switch readers and stop the old pipe. Drop the old table after the rollback window.
 
-The backfill here is a normal INSERT, so the rollup MV fires and the rollup stays consistent.
+The backfill here is a normal INSERT into L1, so the rollup MV, which reads L1, fires and the per-minute rollup stays consistent.
+The noise MV reads L0 and does not fire.
+Count the noise rows of the old landing table separately, as the template shows.
+Leave the noise rows out of the old side when reconciling, too.
 
 When generating backfill SQL, check at generation time that the MV body's `FROM` was replaced with the old landing table.
 In testing, one replacement was missed and rows from another landing table got in.

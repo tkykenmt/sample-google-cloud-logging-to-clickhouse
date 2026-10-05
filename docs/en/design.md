@@ -7,7 +7,8 @@ The configuration is one example; adjust it to your log types, volumes, and rete
 
 > The behavior described here was observed on ClickHouse Cloud 26.6 with Pub/Sub ClickPipes (Private Preview).
 > Private Preview features may change in behavior and pricing before general availability (GA).
-> "(verified)" marks behavior observed on real services, "(docs)" marks statements from official documentation, and "(PoC)" marks items to confirm in your own environment.
+> "(verified)" marks behavior observed on real services, "(docs)" marks statements from official documentation (the link is the source), and "(PoC)" marks items to confirm in your own environment.
+> Prices and limits were checked against the official documentation on 2026-10-05.
 > Test conditions and numbers are in the [findings](findings.md).
 
 Deployment is in [Setup](setup.md), a guided run is in the [Hands-on](hands-on.md), and procedures are in [Operations](operations.md).
@@ -91,7 +92,7 @@ Otherwise, search L1 and extract values into tables and charts.
 | You need separate retention, access, or deletion rules per log kind | None (an L2 separates them) |
 | You need deduplicated results or only the latest state | Use `LIMIT 1 BY` at query time |
 
-- The amount L1 reads is mostly set by the number of rows in the time range. For reference, with about 1.1 million rows per day, a one-day table extracted from L1 took 0.16 s and nine days (18.94 million rows) took 0.6 s. The same table from a typed table took 13 ms. (verified)
+- The amount L1 reads is mostly set by the number of rows in the time range. For reference, a table extracted from L1 took 0.16 s for one day (1.1 million rows) and 0.6 s for nine days (18.94 million rows). The same table from a typed table took 13 ms. (verified)
 - Do not build an L2 for one-off investigations, low-volume logs, or logs whose payload shape is not stable.
 - Add an L3 when long-range trend charts must be fast or when aggregates must be kept longer than rows.
 
@@ -103,11 +104,13 @@ How to build L2 and L3 is in [Operations](operations.md).
 
 | Item | Price (docs) | Volume |
 |---|---|---|
-| Cloud Logging ingestion (the side that goes down) | $0.50/GiB | Logs no longer stored in `_Default` |
-| Pub/Sub publish | $40/TiB (first 10 GiB per month free) | Bytes exported by the sink |
+| Cloud Logging ingestion (the side that goes down) | $0.50/GiB ([pricing](https://cloud.google.com/stackdriver/pricing); first 50 GiB per project per month free) | Logs no longer stored in `_Default` |
+| Pub/Sub publish | $40/TiB ([pricing](https://cloud.google.com/pubsub/pricing)) | Bytes exported by the sink |
 | Pub/Sub delivery | $40/TiB (per subscription) | Bytes exported × number of subscriptions |
-| ClickPipes (Pub/Sub) | Free during Private Preview. GA pricing not published. Other streaming ClickPipes charge $0.04/GB ingested plus replica hours | Ingested volume, number and size of replicas |
+| ClickPipes (Pub/Sub) | Private Preview ([ClickPipes connectors](https://clickhouse.com/docs/integrations/clickpipes)). Pricing during the preview and after GA is not on the public price list; ask ClickHouse. Other streaming ClickPipes charge $0.04/GB ingested plus replica hours ([pricing](https://clickhouse.com/docs/products/cloud/reference/billing/clickpipes/clickpipes-for-streaming-and-object-storage)) | Ingested volume, number and size of replicas |
 | ClickHouse Cloud | Compute and storage on the pricing page | Service size, stored volume (compressed) |
+
+The Pub/Sub free tier is 10 GiB per billing account per month, shared by publish and delivery.
 
 **What to measure while running in parallel**
 
@@ -178,21 +181,21 @@ Before a PoC, decide the following in your environment.
 **Sink**
 
 - For one project, set the sink filter to `logName:"projects/<project>/logs/"` to send every log of the project. Narrow by log kind on the ClickHouse side.
-- For multiple projects, create an aggregated sink on the organization or folder. L1 can filter on `ProjectId`.
-- Sinks evaluate logs independently, so adding a Pub/Sub sink does not stop the `_Default` bucket from storing logs. Routing itself is free. (docs)
+- For multiple projects, create an [aggregated sink](https://cloud.google.com/logging/docs/export/aggregated_sinks) on the organization or folder. L1 can filter on `ProjectId`.
+- Sinks evaluate logs independently, so adding a Pub/Sub sink does not stop the `_Default` bucket from storing logs. Routing itself is free. (docs: [routing overview](https://cloud.google.com/logging/docs/routing/overview))
 
 **What changes when you stop storing logs in the _Default bucket**
 
-| Feature | After storage stops (docs) |
+| Feature | After storage stops (docs: [routing overview](https://cloud.google.com/logging/docs/routing/overview), [log-based alerts](https://cloud.google.com/logging/docs/alerting/log-based-alerts)) |
 |---|---|
 | Error Reporting | Analyzes only logs stored in log buckets, so errors in excluded logs are not reported |
 | Logs Explorer and other Cloud Logging search and analytics | Excluded logs cannot be searched |
 | System log-based metrics | Count only stored logs, so excluded logs are not counted |
 | Log-based metrics defined on the `_Default` bucket | Logs that do not enter the bucket are not counted |
 | Project-level user-defined log-based metrics | Keep counting excluded logs; alerts on them keep working |
-| Log-match alerts | PoC |
+| Log-match alerts (log-based alerting policies) | Do not operate on excluded logs |
 
-Pricing assumptions (docs): ingestion into log buckets is $0.50/GiB including 30 days of storage, and retention beyond 30 days is $0.01/GiB per month.
+Pricing assumptions (docs: [pricing](https://cloud.google.com/stackdriver/pricing)): ingestion into log buckets is $0.50/GiB including 30 days of storage, and retention beyond 30 days is $0.01/GiB per month.
 The `_Required` bucket (Admin Activity audit logs and others) has a fixed 400-day retention at no charge, and its sink cannot be disabled or changed.
 
 **Past logs**
@@ -212,7 +215,7 @@ Treat ClickHouse as a copy for analysis alongside other logs.
 
 **Topic**
 
-- Do not enable message retention by default. With retention, every published message incurs storage for the retention period ($0.27/GiB per month). (docs)
+- Do not enable message retention by default. With retention, every published message incurs storage for the retention period ($0.27/GiB per month). (docs: [storage costs](https://cloud.google.com/pubsub/pricing#storage_costs))
 - L0 holds the replay data. Retention is needed only when a pipe swap must seek back in time, and even then, creating the new pipe before the boundary time avoids seeking.
 - When you must seek, enable a short retention (for example one day) before the work and remove it afterwards. You cannot seek to messages published before retention was enabled.
 - Pub/Sub delivers at least once, so a message can arrive twice. Duplicates are identified by `MessageId`.
@@ -222,16 +225,17 @@ Treat ClickHouse as a copy for analysis alongside other logs.
 - Format JSONEachRow, destination the existing L0. Only the virtual columns `_raw_message`, `_message_id`, `_publish_time`, and `_attributes` are mapped.
 - The start position can be latest, earliest, or timestamp at creation. (verified)
 - "Only destination table" permissions are enough, provided the MVs use `SQL SECURITY DEFINER`. (verified)
-- The managed subscription is created automatically in the topic's project as `clickpipes-<pipe id>`, with 7-day retention, a 60 s ack deadline, ordering enabled, and expiry after 31 days of inactivity. It is deleted with the pipe and kept when the pipe is only stopped. (verified)
-- Unacknowledged messages on the managed subscription incur no storage charge within one day of publishing. If ingestion stops for more than a day, the backlog starts incurring storage. (docs)
+- The managed subscription is created automatically in the topic's project as `clickpipes-<pipe id>`, with 7-day retention, a 60 s ack deadline, and ordering enabled ([docs](https://clickhouse.com/docs/integrations/clickpipes/pubsub/overview)). It expires after 31 days of inactivity (the Pub/Sub default expiration), is deleted with the pipe, and is kept when the pipe is only stopped. (verified)
+- Unacknowledged messages on the managed subscription incur no storage charge within one day of publishing. If ingestion stops for more than a day, the backlog starts incurring storage. (docs: [storage costs](https://cloud.google.com/pubsub/pricing#storage_costs))
 - The pipe inserts about every 5 seconds. Publish to stored took about 3 s at the median and about 5 s at p99. (verified)
 - Start with the default single replica (smallest size) and add replicas and size while measuring latency. (docs; values for your volume are PoC)
 
 **Authentication and network**
 
-- ClickPipes takes a service account key file. Grant a custom role with only the permissions to consume and to create and delete the managed subscription (`terraform/gcp.tf`), and assign owners for key storage and rotation.
+- ClickPipes takes a service account key file; it is the only supported authentication. Grant the official least-privilege role (seven permissions, [Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)) at the project level (`terraform/gcp.tf`), and assign owners for key storage and rotation.
+- The role allows listing topics and creating, consuming and deleting subscriptions anywhere in the project, because ClickPipes also creates short-lived discovery subscriptions (`clickpipes-discovery-<uuid>`) besides the managed one. To narrow it, put the topic in a project dedicated to log export.
 - If Pub/Sub is inside a VPC Service Controls perimeter, check whether ClickPipes outside the perimeter can read it. (PoC)
-- Place the ClickHouse Cloud service in the same region where the topic stores messages. Crossing regions adds egress charges to delivery. (docs)
+- Place the ClickHouse Cloud service in the same region where the topic stores messages. Crossing regions adds egress charges to delivery. (docs: [pricing](https://cloud.google.com/pubsub/pricing))
 
 ### L0: landing table
 
@@ -248,7 +252,7 @@ Compared with one `JSONExtract*` call per field, CPU time was about 1/2.7. (veri
 **Time**
 
 - `Timestamp` is the LogEntry `timestamp`; rows without one use `_publish_time`.
-- Cloud Logging accepts timestamps up to 24 hours in the future and back to the bucket's retention, so `Timestamp` is not in arrival order. Late logs land in past-date partitions.
+- Cloud Logging accepts timestamps up to 24 hours in the future and back to the bucket's retention ([routing overview](https://cloud.google.com/logging/docs/routing/overview)), so `Timestamp` is not in arrival order. Late logs land in past-date partitions.
 - `ReceiveTimestamp` (when Cloud Logging received it) and `PublishTime` (when Pub/Sub published it) are kept too.
 
 **ServiceName**
@@ -290,7 +294,7 @@ Body and ServiceName are always filled, for every kind of log. (verified)
 | LogAttributes `proto.type` | protoPayload type (`@type`) |
 
 - The `key="value"` split applies to every body containing `="`. Unintended keys can appear, so consider limiting it to specific ServiceNames.
-- Attributes use the Map type. This follows the ClickStack recommendation; the JSON type is beta in ClickStack and suited to small, stable key sets. (docs)
+- Attributes use the Map type. This follows the ClickStack recommendation; the JSON type is beta in ClickStack and suited to small, stable key sets. (docs: [Map vs JSON](https://clickhouse.com/docs/clickstack/ingesting-data/schema/map-vs-json))
 - Applications that keep emitting new jsonPayload keys keep growing LogAttributes. Map serialization is `with_buckets` (stored per key) for merged parts only. Parts averaging under 32 keys per row are not split and keep the same layout as before; only parts with many keys are split, automatically, during merges. (verified)
 - Forcing the split makes single-key reads faster but whole-Map reads and inserts slower and storage larger. With 2 to 12 keys on average, single-key queries were 20 to 30% faster and whole-Map queries 2.4 times slower. Do not force it until the average exceeds 32. (verified)
 - Keys you filter on often can be promoted to columns.
@@ -338,7 +342,7 @@ An L2 also reads L0, so it repeats the condition (`sql/examples/l2_audit_events_
 - Column names follow the ClickStack OTel log schema (Timestamp, ServiceName, SeverityText, Body, LogAttributes, ResourceAttributes, ...).
 - Partitioned by date; sort key `(toStartOfFiveMinutes(Timestamp), ServiceName, Timestamp)`, the same as the ClickStack default.
 - For different retention per log kind (long for audit logs, short for application logs), split tables or use row-level TTL.
-- One INSERT can touch at most 100 partitions; beyond that the INSERT fails. Where many logs arrive late, monitor ingestion failures.
+- By default one inserted block can touch at most 100 partitions; beyond that the INSERT fails ([max_partitions_per_insert_block](https://clickhouse.com/docs/reference/settings/session-settings/max-partitions)). Where many logs arrive late, monitor ingestion failures.
 
 **Japanese search**
 
@@ -362,6 +366,8 @@ Example on about 1.1 million synthetic rows (verified):
 - Where logs contain Japanese, index `lower(Body)` with `ngrams(2)`. English words return the same counts. The index is about 4.5 times the word index.
 - An expression can have only one text index, so both tokenizers cannot be used at once.
 - One-character words cannot be searched; use SQL LIKE for those.
+- A row matches when it contains every 2-character piece, so other orderings match too: a body containing ムアウトタイム also matches タイムアウト. Use LIKE when an exact count matters. (verified)
+- Without the index (for example with `use_skip_indexes = 0`), Japanese words did not match and returned 0 rows (clickhouse local 26.7). (verified)
 - As in the ClickStack default schema, attributes are indexed on the key list (`mapKeys`) and on `key=value` items (ALIAS columns such as `LogAttributeItems`). With these columns, ClickStack turns attribute filters into `has(LogAttributeItems, 'key=value')` and the index applies. (verified)
 
 ### L3: aggregate tables

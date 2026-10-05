@@ -2,10 +2,12 @@
 
 [English](../en/hands-on.md) | 日本語
 
-ローカル環境で SQL を確認する第 1 部と、クラウド環境で取り込みから検索までを確認する第 2 部で構成します。
+3 部で構成します。
+どの部も、最後に作ったものを削除して終わります。
 
 - **第 1 部（ローカル環境、約 10 分）**：`clickhouse local` だけで、L0 から L1、L2、L3 までの SQL を動かし、日本語の検索とノイズの除外条件を確かめます。クラウドのリソースは作りません。
-- **第 2 部（実環境、約 60 分）**：検証用の Google Cloud プロジェクトと ClickHouse Cloud のサービスに Terraform で環境を構築し、合成ログを送信して ClickStack で検索します。最後にリソースを削除します。
+- **第 2 部（実環境、約 60 分）**：検証用の Google Cloud プロジェクトと ClickHouse Cloud のサービスに Terraform で環境を構築し、合成ログを送信して ClickStack で検索します。
+- **第 3 部（実環境、約 30 分）**：第 2 部で Terraform が作ったものを、`gcloud` と `clickhousectl` で 1 つずつ作り、それぞれの役割を確かめます。導入の手順ではありません。導入には [導入](setup.md) の Terraform を使います。
 
 設計の背景は [設計](design.md)、本番向けの導入手順は [導入](setup.md) にあります。
 
@@ -15,6 +17,7 @@
 
 - ClickHouse の単体実行バイナリ（`curl https://clickhouse.com/ | sh` でインストールする `clickhouse`）
 - `python3`（標準ライブラリだけを使う）
+- リポジトリの最上位のディレクトリで実行します。
 
 ### 1-2. SQL 一式を実行して確認する
 
@@ -43,13 +46,17 @@ WORKDIR=/tmp/gcl-handson verify/local_e2e.sh 20000
 7. │ ServiceName/Body never empty    │ 0        │      0 │ PASS   │
 8. │ No 1970 timestamps              │ 0        │      0 │ PASS   │
 9. │ Japanese search (index) = LIKE  │ 3079     │   3079 │ PASS   │
+10. │ Stuck-row check ignores noise   │ 0        │      0 │ PASS   │
+11. │ GCE ServiceName is the VM name  │ 0        │      0 │ PASS   │
    └─────────────────────────────────┴──────────┴────────┴────────┘
 ```
 
 - 2 と 3：Lease の更新は L1 に入らず、件数だけがノイズの集計テーブルに残ります。
 - 4：L3 の合計は L1 の行数と一致します。
 - 5 と 6：L2 は、MV で入った分とバックフィルの分を合わせて L1 の監査ログと同じ件数になり、重複もありません。
-- 9：2 文字ずつの全文検索インデックスで「タイムアウト」を探した件数が、LIKE で数えた件数と一致します。
+- 9：2 文字ずつの全文検索インデックスで「タイムアウト」を探した件数が、LIKE で数えた件数と一致します。合成ログには、別の並びで同じ 2 文字の断片を含む本文がないためです（[設計](design.md) の「日本語の検索」）。
+- 10：`verify/checks.sql` の 2 番（L1 に届いていない行）は、ノイズとして外した行を数えません。
+- 11：Compute Engine のログの ServiceName は、VM の名前になります。
 
 ### 1-3. データとクエリを確認する
 
@@ -106,6 +113,8 @@ q "SELECT Rule, Principal, sum(Cnt) FROM gcl.gcl_noise_1m_v1 GROUP BY ALL ORDER 
 
 - 検証用の Google Cloud プロジェクトと、ClickHouse Cloud のサービス（26.6 以降）
 - [導入](setup.md) の「前提」と「1. 認証」
+- 第 1 部の `clickhouse`（`verify/completeness.sh` が使う）
+- 合成ログを公開するアカウントに、トピックへの公開権限（`roles/pubsub.publisher`。プロジェクトのオーナーや編集者なら付いている）。`loadgen/gen_logentry.py` は `gcloud auth application-default print-access-token` のトークン（導入の「1. 認証」の ADC）を使います
 
 ### 2-2. 環境を構築する
 
@@ -119,9 +128,6 @@ terraform init
 terraform apply
 terraform output clickpipe_state   # Running
 ```
-
-Terraform を使えないときは、`cli/.env` に同じ 2 つの値を入れて `cli/deploy.sh` を実行します。
-リソースの削除には `DROP_DATABASE=1 cli/destroy.sh` を使います。
 
 ### 2-3. 合成ログを送信する
 
@@ -148,7 +154,7 @@ Lease の更新を混ぜずに確かめるときは、`--lease-rate` を指定�
 
 ### 2-5. ClickStack で検索する
 
-[導入](setup.md) の「4. ClickStack のソース」でソースとダッシュボードを作り、ClickStack を開きます。
+[導入](setup.md) の「4. ClickStack のソースを作る（任意）」でソースとダッシュボードを作り、ClickStack を開きます。
 
 1. ソース「Cloud Logging」を選び、検索窓に `タイムアウト` と入れる。本文にその語を含むログが出る。
 2. 左のフィルタで ServiceName を `web-frontend` に絞る。
@@ -180,12 +186,12 @@ python3 tools/chq.py -q "SELECT
 
 ### 2-7. L3 を追加する
 
-ログ名ごとの分単位の件数を、L3 として追加します。
+ログ ID（`LogId`）ごとの分単位の件数を、L3 として追加します。
 L2 と同じく、MV を作ってから T を過ぎるのを待ち、T より前のデータをバックフィルします。
 
 ```bash
 T=$(date -u -v+3M +"%Y-%m-%d %H:%M:%S" 2>/dev/null || date -u -d '+3 min' +"%Y-%m-%d %H:%M:%S")
-python3 tools/chq.py --var L3=logs_by_logid_1m_v1 --var L3_TTL_DAYS=400 --var T="$T" sql/runbooks/09_add_l3.sql
+python3 tools/chq.py --var L3=logs_by_logid_1m_v1 --var L3_TTL_DAYS=400 --var MV_DEFINER=default --var T="$T" sql/runbooks/09_add_l3.sql
 # after T has passed
 python3 tools/chq.py --var L3=logs_by_logid_1m_v1 --var T="$T" --var CHECK_TO="$(date -u +'%Y-%m-%d %H:%M:00')" \
   sql/runbooks/09_add_l3_backfill.sql
@@ -197,10 +203,177 @@ python3 tools/chq.py --var L3=logs_by_logid_1m_v1 --var T="$T" --var CHECK_TO="$
 ### 2-8. リソースを削除する
 
 ```bash
+cd terraform && terraform destroy && cd ..
 python3 tools/chq.py -q "DROP DATABASE IF EXISTS gcl SYNC"
-cd terraform && terraform destroy
-rm -f ../sent_ids.txt
+rm -f sent_ids.txt
 ```
 
+先にパイプを削除してから、データベースを削除します。
 ClickPipe を削除すると管理サブスクリプションも削除されます。
 シンクを削除すると、トピックへの送出も止まります。
+続けて第 3 部を行う場合も、ここで削除してから始めます（第 3 部も同じデータベース `gcl` を使います）。
+
+
+## 第 3 部：gcloud と clickhousectl で 1 つずつ作る
+
+第 2 部で Terraform が作ったものを、コマンドで 1 つずつ作ります。
+各手順で、何をなぜ作るのかを確かめます。
+導入には、このコマンドではなく [導入](setup.md) の Terraform を使います。
+Terraform は作ったものを state で管理するので、削除のときに作ったものだけを消せます。
+
+リソースの名前には `handson` を付け、第 2 部や既存のリソースと重ならないようにします。
+第 2 部のリソースは、2-8 で削除してから始めます。
+
+### 3-1. 準備
+
+第 2 部の 2-1 と同じです。
+加えて、`gcloud auth login` で gcloud にログインします（Terraform が使う ADC とは別の認証です）。
+
+```bash
+P=<sandbox project>
+export CH_SERVICE_ID=<service id>
+TOPIC=gcl-handson
+SINK=gcl-handson
+SA=clickpipes-handson
+SA_EMAIL=$SA@$P.iam.gserviceaccount.com
+ROLE=clickpipesHandson
+KEY=handson-key.json
+```
+
+### 3-2. トピック
+
+```bash
+gcloud pubsub topics create $TOPIC --project $P
+```
+
+シンクの送信先です。
+メッセージ保持は設定しません。
+再処理の元データは ClickHouse の L0 に残すためです（[設計](design.md) の「Pub/Sub と ClickPipes」）。
+
+### 3-3. シンクと公開権限
+
+```bash
+gcloud logging sinks create $SINK pubsub.googleapis.com/projects/$P/topics/$TOPIC \
+  --project $P --log-filter="logName:\"projects/$P/logs/\""
+W=$(gcloud logging sinks describe $SINK --project $P --format='value(writerIdentity)')
+echo $W
+gcloud pubsub topics add-iam-policy-binding $TOPIC --project $P --member="$W" --role=roles/pubsub.publisher
+```
+
+シンクは、作成した時点からプロジェクトの全ログをトピックへ送ります。
+シンクはシンクごとの書き込み用 ID（`writerIdentity`）で公開するので、その ID にトピックへの公開権限を付けます。
+権限を付けるまでの間、シンクは公開に失敗し、その分のログはトピックに届きません。
+
+### 3-4. ClickPipes 用のロール、サービスアカウント、鍵
+
+```bash
+gcloud iam roles create $ROLE --project $P --title="ClickPipes Pub/Sub ingestion (hands-on)" \
+  --permissions=pubsub.topics.list,pubsub.topics.get,pubsub.topics.attachSubscription,pubsub.subscriptions.create,pubsub.subscriptions.get,pubsub.subscriptions.delete,pubsub.subscriptions.consume
+gcloud iam service-accounts create $SA --project $P
+gcloud projects add-iam-policy-binding $P --member="serviceAccount:$SA_EMAIL" \
+  --role="projects/$P/roles/$ROLE" --condition=None
+gcloud iam service-accounts keys create $KEY --iam-account=$SA_EMAIL
+```
+
+権限は公式の最小権限ロールの 7 つです（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）。
+ClickPipes は管理サブスクリプション（`clickpipes-<パイプ ID>`）を自分で作って消すので、購読の作成と削除の権限が要ります。
+鍵ファイルはトピックを読むための認証情報です。
+パスワードと同じように扱い、Git に入れません（`.gitignore` で `*.json` を除外しています）。
+
+### 3-5. テーブルと MV
+
+```bash
+python3 tools/chq.py --var LANDING_TTL_DAYS=7 --var LOGS_TTL_DAYS=400 --var MV_DEFINER=default \
+  sql/10_landing_v1.sql sql/20_logs_v1.sql sql/30_logs_v1_mv.sql sql/40_rollup_1m_v1.sql sql/50_noise_rollup_v1.sql
+```
+
+パイプより先に作ります。
+パイプは既存の L0 に書き込み、L1 以降は MV が作ります。
+`tools/chq.py` は Query API を使うので、30 秒を超える文は応答が切れます（サーバー側では実行が続きます）。
+大量のバックフィルは、`clickhouse client` のネイティブ接続で実行します。
+
+### 3-6. ClickPipe
+
+```bash
+clickhousectl cloud clickpipe create pubsub "$CH_SERVICE_ID" \
+  --name gcl-handson --topic $TOPIC --project-id $P --format JSONEachRow \
+  --service-account-file $KEY --seek-type latest \
+  --database gcl --table gcl_landing_v1 \
+  --column "_raw_message:String" --column "_message_id:String" \
+  --column "_publish_time:DateTime64(3)" --column "_attributes:Map(String, String)"
+clickhousectl cloud clickpipe list "$CH_SERVICE_ID"
+PIPE_ID=<list に出た gcl-handson の ID>
+clickhousectl cloud clickpipe get "$CH_SERVICE_ID" $PIPE_ID   # state が Running になるまで待つ
+```
+
+パイプは Pub/Sub の仮想列（生メッセージ、メッセージ ID、公開時刻、属性）だけを L0 に書きます。
+作成時にパイプが管理サブスクリプションを作ります。
+保持 7 日、ack 期限 60 秒、順序付けが有効です。
+作成が権限の不足で失敗した場合は、IAM の反映を 1〜2 分待ってから作り直します。
+
+### 3-7. ClickStack のソース
+
+ClickStack の Team Settings の Sources で、次の値のログソースを作ります。
+`terraform/clickstack.tf` と同じ値です。
+ダッシュボードは Terraform でだけ作ります（`terraform/clickstack/dashboard.json.tftpl`）。
+
+```json
+{
+  "kind": "log",
+  "name": "Cloud Logging (hands-on)",
+  "databaseName": "gcl",
+  "tableName": "gcl_logs_v1",
+  "timestampValueExpression": "Timestamp",
+  "displayedTimestampValueExpression": "Timestamp",
+  "defaultTableSelectExpression": "Timestamp, ServiceName, SeverityText, ResourceType, Body",
+  "serviceNameExpression": "ServiceName",
+  "severityTextExpression": "SeverityText",
+  "bodyExpression": "Body",
+  "eventAttributesExpression": "LogAttributes",
+  "resourceAttributesExpression": "ResourceAttributes",
+  "traceIdExpression": "TraceId",
+  "spanIdExpression": "SpanId",
+  "implicitColumnExpression": "Body",
+  "useTextIndexForImplicitColumn": "auto",
+  "highlightedRowAttributeExpressions": [
+    { "sqlExpression": "ResourceType", "alias": "type" },
+    { "sqlExpression": "LogId", "alias": "log" },
+    { "sqlExpression": "ProjectId", "alias": "project" }
+  ]
+}
+```
+
+`useTextIndexForImplicitColumn` を `auto` にすると、検索窓の語が `lower(Body)` のテキストインデックスを使う条件になります。
+日本語の検索には、このインデックスが必要です。
+
+### 3-8. 確かめる
+
+第 2 部の 2-3 と 2-4 を、トピック名を `$TOPIC` に替えて実行します。
+
+```bash
+python3 loadgen/gen_logentry.py --publish projects/$P/topics/$TOPIC --rate 50 --duration 120 --ids-out sent_ids.txt
+verify/completeness.sh sent_ids.txt
+```
+
+`missing_in_l0` と `missing_in_l1` が 0 になります。
+
+### 3-9. 作ったものを削除する
+
+第 3 部で作った名前のものだけを、作った順の逆に削除します。
+
+```bash
+clickhousectl cloud clickpipe delete "$CH_SERVICE_ID" $PIPE_ID   # 管理サブスクリプションも消える
+python3 tools/chq.py -q "DROP DATABASE IF EXISTS gcl SYNC"
+gcloud logging sinks delete $SINK --project $P
+gcloud pubsub topics delete $TOPIC --project $P
+gcloud projects remove-iam-policy-binding $P --member="serviceAccount:$SA_EMAIL" \
+  --role="projects/$P/roles/$ROLE" --condition=None
+gcloud iam service-accounts delete $SA_EMAIL --project $P
+gcloud iam roles delete $ROLE --project $P
+rm -f $KEY sent_ids.txt
+```
+
+ClickStack のソースは画面から削除します。
+サービスアカウントを削除すると、その鍵も無効になります。
+削除したカスタムロールは 7 日以内なら復元でき、完全に削除されるまで同じ ID では作り直せません。
+もう一度試すときは `ROLE` の値を変えます。
