@@ -328,6 +328,7 @@ The same window had also reached the main L1 through the sink, so the two were c
 | Insert into L0 (`gcs()`, HMAC key) | Four one-hour chunks of receive time, 1.5 to 2.6 s each. L0 = L1 = L3 total = 151,192, 0 duplicates. Noise 0 (Lease updates go to `_Required`) |
 | Comparison with the main L1 | 0 backfilled rows missing from the main L1. The 32,379 rows only in the main L1 were 32,376 Admin Activity and 3 System Event audit logs, both stored only in `_Required` |
 | HMAC key | `system.query_log` kept the key ID; the secret was `[HIDDEN]` |
+| Copy from `_Required` (same day, 00:00 to 00:10) | Succeeded: 16,300 entries, 2 files (Admin Activity, System Event), 23 MB, about 48 minutes. The 14,617 Lease updates equalled the main noise counts (14,617), and every other row was in the main L1 |
 
 The boundary handling and rows older than the L0 TTL were checked on clickhouse local 26.7:
 
@@ -337,6 +338,5 @@ The boundary handling and rows older than the L0 TTL were checked on clickhouse 
 
 ## Not tested
 
-- Copying from the `_Required` bucket
 - Replicas needed at tens of MB/s
 - Real logs from sources other than GKE (such as Cloud Run request logs); synthetic logs were used instead

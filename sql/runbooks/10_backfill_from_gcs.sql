@@ -18,7 +18,8 @@
 -- Copied files (gcloud logging copy, 2026-10-05): one LogEntry JSON per line, the same shape the sink
 -- publishes, under <log id>/YYYY/MM/DD/<HH:MM:SS>_<HH:MM:SS>_copy_log_entries_<op>_<region>_S0.json.
 -- Copying 3 hours of _Default (151,192 entries, 116 MB in 48 files) took 76 minutes, 10 of them queued.
--- Copy from _Default leaves out logs stored only in _Required (Admin Activity and System Event audit logs).
+-- Copy from _Default leaves out logs stored only in _Required (Admin Activity and System Event audit logs);
+-- copy _Required too for those (10 minutes: 16,300 entries, 23 MB, about 48 minutes, 90% Lease updates).
 -- Cloud (26.6): each one-hour chunk inserted in 2.5 s; every backfilled LogEntry was also in the live L1
 -- of the same window, and the live rows missing from the backfill were the _Required audit logs only.
 -- Verified (clickhouse local 26.7, 3,000 entries, live boundary in the middle): L1 + noise counts =

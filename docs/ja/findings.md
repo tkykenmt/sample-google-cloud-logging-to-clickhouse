@@ -328,6 +328,7 @@ GCP の東京リージョン（`asia-northeast1`）に `clickhousectl cloud serv
 | L0 への取り込み（`gcs()`、HMAC キー） | 受信時刻の 1 時間ごとに 4 回、各 1.5〜2.6 秒。L0 = L1 = L3 の合計 = 151,192、重複 0。ノイズ 0（Lease 更新は `_Required` 行きのため） |
 | 本線の L1 との突き合わせ | 取り込んだ行のうち本線にない行は 0。本線にだけある 32,379 行は、Admin Activity の監査ログ 32,376 行と System Event の監査ログ 3 行で、どちらも `_Required` にだけ保存されるログだった |
 | HMAC キー | `system.query_log` にキーの ID は残り、シークレットは `[HIDDEN]` になっていた |
+| `_Required` からの書き出し（同じ日の 00:00〜00:10） | 成功。16,300 件、2 ファイル（Admin Activity、System Event）、23 MB、約 48 分。Lease 更新 14,617 件は本線のノイズの件数（14,617）と一致し、それ以外の行はすべて本線の L1 にあった |
 
 境目の突き合わせと、L0 の TTL を過ぎた行の扱いは、clickhouse local 26.7 で確かめました。
 
@@ -337,6 +338,5 @@ GCP の東京リージョン（`asia-northeast1`）に `clickhousectl cloud serv
 
 ## 未検証の項目
 
-- `_Required` バケットからの書き出し
 - 数十 MB/s 級の流量でのパイプの必要なレプリカ数
 - GKE 以外の発生源（Cloud Run のリクエストログなど）の実ログ。合成ログで代用した

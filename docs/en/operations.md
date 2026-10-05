@@ -219,7 +219,7 @@ Results in testing ([Findings](findings.md), "Backfilling existing logs"):
 - The copied files held one LogEntry JSON per line, the same shape the sink publishes, so MV1 parses them as is.
 - Copying 3 hours (151k entries, 116 MB) took 76 minutes, 10 of them queued. Copies are slow: split the period and start them early.
 - Inserting took 2.5 s per hour of logs. Every backfilled row matched a row the sink had delivered to L1 for the same window.
-- A copy from `_Default` leaves out the Admin Activity and System Event audit logs stored only in `_Required`. Copy from `_Required` too if you need them (copying from `_Required` was not tested).
+- A copy from `_Default` leaves out the Admin Activity and System Event audit logs stored only in `_Required`. Copy from `_Required` too if you need them (`gcloud logging copy _Required ...`). In testing, 10 minutes took about 48 minutes to copy (16,300 entries, 23 MB), 90% of them Kubernetes Lease updates. Excluding noise you drop from L1 in the copy filter cuts volume and time (if you do not need its counts either).
 
 Cautions:
 
