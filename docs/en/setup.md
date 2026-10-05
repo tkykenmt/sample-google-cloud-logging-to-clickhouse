@@ -3,7 +3,8 @@
 English | [日本語](../ja/setup.md)
 
 Terraform creates the Google Cloud resources, the ClickHouse tables and MVs, the ClickPipe, and the ClickStack source and dashboard.
-The "Steps" on this page are the only deployment procedure.
+With Terraform, the "Steps" on this page are the only deployment procedure.
+Without Terraform, build the same configuration in the consoles with [Setup in the browser](setup-console.md) (run one or the other, not both).
 To build the same pieces one at a time with gcloud and clickhousectl and see what each does, follow part 3 of the [Hands-on](hands-on.md).
 The reasoning is in [Design](design.md).
 

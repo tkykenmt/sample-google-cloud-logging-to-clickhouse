@@ -298,8 +298,23 @@ Message storage was pinned to Tokyo with `topic_storage_regions = ["asia-northea
 - The first `tools/chq.py` run against the new service made `clickhousectl` create a Query API endpoint and key.
 - The same project held two older managed subscriptions attached to `_deleted-topic_`, dated before this test. The 2026-10-02 removal check may have missed this.
 
+## Setup in the browser (2026-10-05)
+
+The [Setup in the browser](setup-console.md) steps were run in the Google Cloud and ClickHouse Cloud consoles only, against a test project and a new service in Tokyo (Mini, 26.6).
+The sink filter was replaced with one that matches no real logs after the screenshot was taken, and only synthetic logs were published.
+
+| Step | Result |
+|---|---|
+| Topic | "Add a default subscription" was checked by default on the create page. Message storage could be restricted to `asia-northeast1` under Storage policy in the info panel of the edit page |
+| Sink | With a topic in the same project, publish permission on the topic (`roles/pubsub.publisher`) was granted to the sink's writer identity automatically |
+| Custom role | The permission picker's filter accumulates conditions; the seven permissions were selected one at a time, removing the filter in between. The API showed all seven |
+| SQL console | `sql/10` to `50` pasted into one query ran together with Run, creating four tables and three MVs |
+| ClickPipe | "GCP Pub/Sub" was labelled Beta in the source list. With the existing L0 selected, the four virtual columns were mapped to the columns of the same names automatically and the JSON fields stayed unmapped. A sample fetch was required before the next step |
+| Permission "Only destination" | The page warned "No access to Materialized Views". The pipe user had only SELECT, INSERT and similar grants on L0 and its error table (`system.grants`), yet with 600 synthetic messages (115 Lease updates) L0 had no loss or duplicates, L1 (485) plus the noise counts (115) equalled L0, and the L3 total equalled L1 |
+| ClickStack source | Saved with the optional fields set as in Terraform; タイムアウト ("timeout") returned 42 rows. The GCE ServiceName was the VM name |
+| Removal | After deleting the pipe and confirming its managed subscription was gone, the sink, topic, role binding, service account, role and service were deleted |
+
 ## Not tested
 
-- A pipe created with "Only destination table" in the UI (substituted by inserts from a user with the same permissions)
 - Replicas needed at tens of MB/s
 - Real logs from sources other than GKE (such as Cloud Run request logs); synthetic logs were used instead
