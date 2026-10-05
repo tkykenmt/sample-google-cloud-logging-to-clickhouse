@@ -22,7 +22,7 @@ L0 と L1 の作り直しと切り替えは、復旧や構成の見直しのと�
 | 失敗した INSERT | 6 番 | 1 件以上 | 「MV のエラーの検知と復旧」 |
 | 取り込みの遅れ | 1 番 | p99 が 10 秒を超えて増え続ける | パイプのレプリカを増やす。Pub/Sub の未処理メッセージの経過時間も見る |
 | 重複 | 3 番 | 障害や一時停止の後に増えた | 検索側で除くか、付録 A2 で該当日を作り直す |
-| パイプの状態 | `clickhousectl cloud clickpipe get` | Failed | 「MV のエラーの検知と復旧」 |
+| パイプの状態 | `clickhousectl cloud clickpipe get <service id> <pipe id>`（パイプの ID は `terraform output clickpipe_id`） | Failed | 「MV のエラーの検知と復旧」 |
 
 ```bash
 export CH_SERVICE_ID=<service id>
@@ -71,11 +71,11 @@ T より前と T 以降を新旧の MV で分担するので、取りこぼし�
 
 - L0 には生の行が保持期間のあいだ残るので、除外条件を取り消す場合は、L0 から作り直せます。
 - 件数は残るので、更新が止まった（コントローラーが停止した）ことはグラフで見えます。
-- Pub/Sub と ClickPipes の転送量は減りません。Cloud Logging 側にも残り（`_Required` 行きなど）、量が多く、ClickHouse で検索しないログは、シンクのフィルタで除外する選択肢もあります。その場合は件数も残りません。検証環境の Lease 更新は、Pub/Sub に送った量の 59% でしたが、金額ではクラスタ 1 つあたり月に約 $4 でした（[検証記録](findings.md)）。
+- Pub/Sub と ClickPipes の転送量は減りません。Cloud Logging 側にも残り（`_Required` 行きなど）、量が多く、ClickHouse で検索しないログは、シンクのフィルタで除外する選択肢もあります。その場合は件数も残りません。検証環境の Lease 更新は、Pub/Sub に送った量の 59% でしたが、金額に換算すると GKE クラスタ 1 つあたり月に約 $3 でした（[検証記録](findings.md) の「Pub/Sub の課金対象量」）。
 
 除外条件の切り替えには、ほかの手順と同じく `_publish_time` の境界 T を使います。
 集計の MV は `_publish_time >= T` の行だけを数え、MV1 は `_publish_time >= T` の行だけを外します。
-検証では、境界以降に集計された件数（1,940）と、L0 にある同じ条件の行の数（1,940）が一致し、L1 には 0 件でした。
+検証環境の 1 日分（2026-10-04）では、集計された件数と、L0 にある同じ条件の行の数がどちらも 2,103,762 件で一致し、L1 には 0 件でした。
 
 ### ログの種類に依存しない整形は MV1 に入れる
 - JSON のキーが `msg` のログ（istio、cilium など）は、`message` がなければ `msg` を Body にする。
@@ -143,7 +143,7 @@ MV が例外を出したときの挙動は、次のとおりでした。
 4. `MODIFY QUERY` で MV を直すと、次の再試行で L1 に届き、欠損も重複も出ない。
 
 4 は、L0 でブロックの重複が排除されたうえで、下流の MV にはブロックがもう一度渡されるためです。
-これは ClickHouse Cloud の既定値 `deduplicate_blocks_in_dependent_materialized_views = 1` によります。
+これは設定 `deduplicate_blocks_in_dependent_materialized_views` の既定値 1 によります（[設定の説明](https://clickhouse.com/docs/reference/settings/session-settings/other#deduplicate_blocks_in_dependent_materialized_views)）。
 
 ただし検証では、最初の失敗から約 60 分たつと、パイプは Failed になって取り込みを止めました。
 その場合も、MV を直してから `clickpipe start` で再開すれば欠損は出ませんでしたが、処理が停滞したバッチの一部が L1 に二重に入りました。
@@ -163,20 +163,53 @@ DROP と CREATE の間に INSERT されたブロックは、MV を通らずに L
 | MV の読み取り元を `EXCHANGE TABLES` | MV は名前に追従し、新しくその名前を持ったテーブルへの INSERT で発火した |
 | MV の読み取り元を `RENAME TABLE` | 旧名と新名のどちらへ INSERT しても、MV はエラーを出さずに発火しなくなった |
 
-ClickHouse の版によっては、`EXCHANGE` の後に MV が発火しなくなる不具合もありました（[ClickHouse#105021](https://github.com/ClickHouse/ClickHouse/issues/105021)）。
+26.5 の開発版には、`EXCHANGE` の後に MV が発火しなくなる不具合もありました（[ClickHouse#105021](https://github.com/ClickHouse/ClickHouse/issues/105021)、修正済み）。
 `EXCHANGE` を使ってよいのは、MV にもパイプにもつながらない参照専用のテーブルに限ります。
 
 このほか、MV を DROP して作り直す操作（その間の INSERT が MV を通らない）、MV の SELECT をそのまま `INSERT ... SELECT` に使う操作（列が位置で対応付けられて値がずれる）、L0 を重複除去なしで作り直しの元にする操作（再配信の重複が L1 に戻る）も避けます。
+
+## 保持期間を変える
+
+`landing_ttl_days` と `logs_ttl_days` はテーブルの作成時にだけ使われます。
+作成後に変えるときは、テーブルごとに `MODIFY TTL` を実行し、`terraform.tfvars` の値も合わせておきます。
+
+```sql
+ALTER TABLE gcl.gcl_landing_v1 MODIFY TTL toDateTime(_publish_time) + INTERVAL 14 DAY;
+ALTER TABLE gcl.gcl_logs_v1    MODIFY TTL toDateTime(Timestamp) + INTERVAL 400 DAY;
+ALTER TABLE gcl.gcl_logs_1m_v1 MODIFY TTL Minute + INTERVAL 400 DAY;
+ALTER TABLE gcl.gcl_noise_1m_v1 MODIFY TTL Minute + INTERVAL 400 DAY;
+```
+
+どのテーブルも `ttl_only_drop_parts = 1` なので、期限を過ぎた日のパーティションが丸ごと削除されます。
+L0 を短くすると、作り直しと照合ができる範囲（付録 A2〜A5）も短くなります。
+
+## 本番ログへ切り替える
+
+導入しても、既存の `_Default` バケットへの保存は変わりません。
+シンクは独立にログを評価するので、Pub/Sub へのシンクを足しても `_Default` への保存は続きます。
+保存を止めるときは、並走させてから切り替えます。
+
+1. 並走：Pub/Sub へのシンクを追加し、`_Default` への保存も続ける。
+2. 突き合わせ：シンクの送出件数と ClickHouse の取り込み件数を比べ（「日常の確認」の経路全体の欠損）、ClickStack で日常の検索ができることを確かめる。
+3. 棚卸し：`_Default` に保存されたログを利用する機能を洗い出し、ClickStack へ移すか、そのログだけ `_Default` に残すかを決める（[設計](design.md) の「_Default バケットへの保存を止めると変わるもの」）。
+4. 切り替え：`_Default` のシンクに除外フィルタを入れるか、シンクを無効にして、新しいログを `_Default` に入れないようにする。フィルタを外せば戻せる。
+
+`_Default` のシンクは、このリポジトリの Terraform では管理しません。
+切り替えは利用者の環境で定めた手順で行います。
+
+複数のプロジェクトのログをまとめる場合は、シンクを組織かフォルダに作り、`includeChildren` を有効にします（[集約シンク](https://cloud.google.com/logging/docs/export/aggregated_sinks)）。
+このリポジトリの Terraform はプロジェクトのシンクだけを作ります。
 
 ## リソースの削除
 
 - 止めたパイプの管理サブスクリプションは残り、メッセージが蓄積し続けます。使わないパイプは削除します。
 - パイプを削除しても、宛先テーブルとエラーテーブルは残ります。不要な場合は別途削除します。
+- 構成全体の削除は [導入](setup.md) の「リソースを削除する」にあります。
 
 ## 付録：L0・L1 の作り直しと切り替え（復旧用）
 
 L1 は共通項目を列として定義し、個別の内容を属性として保存するため、作り直すことはほとんどありません。
-次の手順は、解析の誤りを直すとき、L1 の型や並び順を変えるとき、パイプそのものを替えるときの復旧用です。
+次の手順は、解析の誤りを直すとき、L1 の型や並び順を変えるとき、パイプそのものを替えるとき、既存の取り込みから移るときに使います。
 
 ### A1 派生列の追加
 
@@ -243,6 +276,7 @@ LogEntry の `timestamp` は保持期間内の過去値と最大 24 時間先の
 新しいパイプは新しいサブスクリプションを作り、そこには全メッセージのコピーが届きます。
 
 新しいパイプは境界時刻 T2 より前に、開始位置 latest で作ります。
+Terraform では、`clickhouse_clickpipe.gcl` を複製して名前と宛先のテーブル（`gcl_landing_v2`）を変えたリソースを足します。
 新しいサブスクリプションは作成後に公開されたメッセージをすべて受け取るので、T2 以降の分は取りこぼしません。
 
 Pub/Sub トピックのメッセージ保持は、既定では有効にしません。
@@ -255,7 +289,9 @@ Pub/Sub トピックのメッセージ保持は、既定では有効にしませ
 保持を有効にする前のメッセージには Seek できません。
 
 手順は Blue/Green と同じく境界時刻 T2 で分担します。
-新しい着地テーブルから T2 以降のデータを書き込む MV を作り、旧 MV は `MODIFY QUERY` で T2 より前に絞ります。
+旧着地テーブルを読む MV（MV1、ノイズの集計、L2 の MV）のそれぞれについて、新しい着地テーブルから T2 以降のデータを書き込む MV を作り、旧 MV は `MODIFY QUERY` で T2 より前に絞ります。
+MV1 だけを移すと、旧パイプを止めた時点でノイズの集計と L2 が止まります。
+ひな型の `{{L1}}` は、導入直後なら `gcl_logs_v1`、A3 の後なら `gcl_logs_v2` です。
 Seek で遡った場合、その分には重複が混ざりますが（検証では 500 件）、すべて T2 より前なので境界条件によって除外されます。
 
 旧パイプは、旧着地テーブルが T2 を越え、処理が停滞したバッチがないことを確かめてから止めます。
@@ -273,7 +309,10 @@ Seek で遡った場合、その分には重複が混ざりますが（検証で
 4. 新旧が並走している間に、受信時刻の 1 時間ごとに識別子の集合を突き合わせ、差が 0 であることを確かめる。
 5. 読み取り先を切り替え、旧パイプを止める。旧テーブルはロールバック期間が過ぎてから削除する。
 
-この手順のバックフィルは通常の INSERT なので、集計の MV も発火し、集計テーブルは自動で整合します。
+この手順のバックフィルは L1 への通常の INSERT なので、L1 から読む集計の MV は発火し、分単位の集計テーブルは自動で整合します。
+ノイズの集計の MV は L0 を読むので発火しません。
+旧着地テーブルのノイズの行は、ひな型の手順で別に数えて入れます。
+突き合わせでも、旧着地テーブル側からノイズの行を除きます。
 
 SQL を生成してバックフィルするときは、MV の本文の `FROM` が旧着地テーブルに置き換わったことを生成時に検査します。
 検証では置き換えが 1 か所漏れ、別の着地テーブルの行が混入しました。

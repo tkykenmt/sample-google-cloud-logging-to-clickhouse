@@ -177,7 +177,7 @@ The hourly difference between Cloud Monitoring `logging.googleapis.com/exports/l
 
 ## Bytes that drive Pub/Sub cost
 
-The price list charges $40/TiB each for publish and delivery (first 10 GiB per month free, minimum 1 KB per request).
+The [price list](https://cloud.google.com/pubsub/pricing) charges $40/TiB each for publish and delivery (the first 10 GiB per month, shared by publish and delivery, is free; minimum 1 KB per request).
 Volumes over three hours were measured in Cloud Monitoring with one all-logs sink and one running pipe.
 
 | Item | Bytes | Metric |
@@ -191,6 +191,7 @@ Volumes over three hours were measured in Cloud Monitoring with one all-logs sin
 - In price, Pub/Sub (publish and delivery) came to about 78% of the Cloud Logging ingestion charge.
 - For the logs Cloud Logging bills, the JSON sent to Pub/Sub was about 1.2 times the billable volume, so Pub/Sub would cost about 20% of the ingestion charge.
 - On the delivery side, acks (55.3 MB) and ack deadline extensions (179.8 MB) were also counted in byte_cost. Whether they are billed was not confirmed.
+- Counting Lease updates alone over one day (2026-10-04, two GKE clusters) gave 2.1 million messages, 2.71 GiB of message data. At the publish and delivery prices that is about $6.4 a month, or about $3 per cluster (a rough figure that ignores the free tier and the 1 KB minimum). The counted rows (`gcl_noise_1m_v1`) and the matching rows in L0 were both 2,103,762, with zero in L1.
 - A stopped pipe's managed subscription had accumulated 1.7 million messages, 2.3 GB, 19 hours after the stop. Messages older than one day incur storage charges.
 
 ## Attribute Maps and indexes (against the ClickStack default schema)
@@ -259,7 +260,7 @@ A table of GKE upgrade notifications (node pool, versions, count, failures, aver
 | L1 (filtered by ServiceName, 1 day) | ― | 159 ms | 1.1 million |
 
 - The L1 sort key starts with a 5-minute bucket, so filtering by ServiceName barely reduces reads; the time range decides.
-- At the test environment's volume (about 1.1 million rows a day), dashboards run well on L1 alone. Reads grow with the number of rows in the time range.
+- Reads grow with the number of rows in the time range: 159 ms for one day (1.1 million rows) and 623 ms for nine days (18.94 million rows). At this scale, dashboards run well on L1 alone.
 
 ## Text index
 
@@ -269,6 +270,7 @@ The plan was the same through the stable view (`gcl.logs`).
 ## Deployment procedures (Terraform and cli/deploy.sh, 2026-10-02)
 
 Both procedures were run from creation to removal on a test project and service.
+`cli/deploy.sh` and `cli/destroy.sh` were later removed from the repository; the same commands are in part 3 of the [Hands-on](hands-on.md).
 
 | Procedure | Result |
 |---|---|
@@ -277,6 +279,24 @@ Both procedures were run from creation to removal on a test project and service.
 | Publishing 600 synthetic messages and reconciling (both) | Zero missing and zero duplicates in L0. Only the mixed-in Lease updates stayed out of L1; L1 plus noise counts equaled L0, and the L3 total equaled L1. Real logs from the sink started arriving within minutes |
 | ClickStack source (created by Terraform) | Searching 「タイムアウト」 returned logs with Japanese bodies |
 | `terraform destroy`, `cli/destroy.sh` | The topic, sink, managed subscription, service account, and pipe were gone. The custom role remained soft-deleted (restorable) |
+
+## Deploying to a new service in Tokyo (Terraform, 2026-10-05)
+
+A new service (26.6, 8 GB memory) was created in GCP Tokyo (`asia-northeast1`) with `clickhousectl cloud service create`, and the [Setup](setup.md) steps were run against it from an empty state.
+Message storage was pinned to Tokyo with `topic_storage_regions = ["asia-northeast1"]`, the sink filter matched no real logs, and only synthetic logs were published.
+
+| Step | Result |
+|---|---|
+| `terraform plan` | 9 resources to add (before `terraform_data.subscription_cleanup` was added) |
+| `terraform apply` | Done in about 57 seconds; the pipe was Running. Message storage was `asia-northeast1` only, with the label `managed-by=terraform` |
+| Managed subscription | 60 s ack deadline, 7-day retention, ordering on, 31-day expiration |
+| 600 synthetic messages (20% Lease updates) | No loss and no duplicates in L0. L1 (476) plus the noise counts (124) equalled L0, and the L3 total equalled L1. The GCE ServiceName was the VM name |
+| `verify/checks.sql` | 0 stuck batches, 0 failed inserts, 0 `MessageId` duplicates, publish-to-insert p99 about 5.7 s |
+| `terraform destroy` (without the wait) | Removed 9 resources, but the managed subscription was left behind, attached to the deleted topic (`_deleted-topic_`). Deleting the pipe returned in 0 seconds and the key and binding were removed right after |
+| `terraform destroy` (with the wait) | Waited 23 seconds after deleting the pipe until the managed subscription was gone, then removed the key and binding. Nothing was left |
+
+- The first `tools/chq.py` run against the new service made `clickhousectl` create a Query API endpoint and key.
+- The same project held two older managed subscriptions attached to `_deleted-topic_`, dated before this test. The 2026-10-02 removal check may have missed this.
 
 ## Not tested
 

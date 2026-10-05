@@ -5,6 +5,10 @@
 --   position(_raw_message, 'HTTP status=200') > 0 AND position(_raw_message, 'fluentbit') > 0
 -- Verified (clickhouse local 26.7, TZ=UTC): a matching row after T is counted, one before T is not.
 
+-- Step 1: choose T = now + 5..10 min (UTC) and write the condition so that it matches only the noise
+--   (test it on L0 first: SELECT count() FROM gcl.gcl_landing_v1 WHERE ({{COND}}) AND _publish_time > now() - INTERVAL 1 HOUR).
+--   Add the same condition to the stuck-row checks (verify/checks.sql 2, runbook 05) after T.
+
 -- Step 2: start counting the new rule from T (the existing rule keeps counting).
 ALTER TABLE gcl.gcl_noise_1m_v1_mv MODIFY QUERY
 WITH

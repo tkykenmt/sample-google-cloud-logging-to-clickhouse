@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """Run a .sql file (or -q SQL) against a ClickHouse Cloud service, one statement at a time,
-through `clickhousectl cloud service query`. Statements are split on lines ending with ';'.
+through `clickhousectl cloud service query`. Statements are split on lines ending with ';'
+(optionally followed by a -- comment).
 
 Usage: chq.py --service <id> file.sql [file2.sql ...]   |   chq.py --service <id> -q "SELECT 1"
 Variables: --var NAME=VALUE replaces {{NAME}} in the SQL text.
 """
 import argparse, os, re, subprocess, sys
 
+END = re.compile(r";\s*(--[^']*)?$")  # ';' at the end of a line, before an optional trailing comment
+
 def statements(text):
     buf = []
     for line in text.splitlines():
+        m = END.search(line)
+        if m:
+            line = line[:m.start() + 1]
         buf.append(line)
-        if line.rstrip().endswith(";"):
+        if m:
             lines = list(buf)
             while lines and (not lines[0].strip() or lines[0].strip().startswith("--")):
                 lines.pop(0)  # leading comments would be parsed as CLI flags

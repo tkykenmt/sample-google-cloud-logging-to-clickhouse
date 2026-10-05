@@ -1,6 +1,8 @@
 # Tables and materialized views (L0, L1, MV1, L3 rollup, noise counts) from sql/.
 # The ClickHouse provider has no resource for DDL, so tools/chq.py runs the files through the Cloud Query API.
-# Every statement is CREATE ... IF NOT EXISTS, so re-running is safe.
+# Every statement is CREATE ... IF NOT EXISTS, so re-running is safe, and it also means a changed TTL or
+# definer does not reach existing tables: change those with ALTER TABLE (docs/en/operations.md).
+# The variables passed on the command line are restricted by their validation rules (variables.tf).
 resource "terraform_data" "schema" {
   count = var.apply_schema ? 1 : 0
 
@@ -16,6 +18,11 @@ resource "terraform_data" "schema" {
 }
 
 locals {
+  # Names fixed by sql/10..50. Change them there first if you rename anything.
+  database      = "gcl"
+  landing_table = "gcl_landing_v1"
+  logs_table    = "gcl_logs_v1"
+
   schema_files = [
     "sql/10_landing_v1.sql",
     "sql/20_logs_v1.sql",
@@ -36,6 +43,7 @@ resource "clickhouse_clickpipe" "gcl" {
       topic          = google_pubsub_topic.logs.name
       format         = "JSONEachRow"
       seek_type      = var.pipe_seek_type
+      seek_timestamp = var.pipe_seek_timestamp
       authentication = "SERVICE_ACCOUNT"
       service_account_key = {
         service_account_file = local.sa_key_b64
@@ -44,8 +52,8 @@ resource "clickhouse_clickpipe" "gcl" {
   }
 
   destination = {
-    database      = "gcl"
-    table         = "gcl_landing_v1"
+    database      = local.database
+    table         = local.landing_table
     managed_table = false
     columns = [
       { name = "_raw_message", type = "String" },
@@ -63,6 +71,7 @@ resource "clickhouse_clickpipe" "gcl" {
 
   depends_on = [
     terraform_data.schema,
+    terraform_data.subscription_cleanup,
     google_project_iam_member.clickpipes,
     google_pubsub_topic_iam_member.sink_publisher,
   ]

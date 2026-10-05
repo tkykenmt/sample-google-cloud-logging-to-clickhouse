@@ -5,7 +5,8 @@ locals {
 
 # No message retention on the topic: L0 in ClickHouse is the replay buffer.
 resource "google_pubsub_topic" "logs" {
-  name = var.topic_name
+  name         = var.topic_name
+  kms_key_name = var.topic_kms_key_name
 
   dynamic "message_storage_policy" {
     for_each = length(var.topic_storage_regions) > 0 ? [1] : []
@@ -38,7 +39,12 @@ resource "google_pubsub_topic_iam_member" "sink_publisher" {
   member = google_logging_project_sink.to_pubsub.writer_identity
 }
 
-# ClickPipes creates and deletes its own managed subscription, so it needs more than subscriber rights.
+# The permissions of the official least-privilege role, granted at the project level as documented:
+# https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth
+# ClickPipes lists topics and creates short-lived discovery subscriptions (clickpipes-discovery-<uuid>) as
+# well as its managed subscription (clickpipes-<pipe id>), so it needs more than subscriber rights.
+# The key can therefore create, consume and delete subscriptions anywhere in the project: use a project
+# dedicated to log export if that is too broad, and treat the key as a secret.
 resource "google_project_iam_custom_role" "clickpipes" {
   role_id     = var.clickpipes_role_id
   title       = "ClickPipes Pub/Sub ingestion"
@@ -68,4 +74,29 @@ resource "google_project_iam_member" "clickpipes" {
 resource "google_service_account_key" "clickpipes" {
   count              = var.service_account_key_file == null ? 1 : 0
   service_account_id = google_service_account.clickpipes.name
+}
+
+# Deleting the ClickPipe returns at once, and ClickPipes deletes its managed subscription afterwards
+# with this service account. On destroy, wait for that before the key, the role binding and the topic
+# go; otherwise the subscription is left behind, attached to the deleted topic (seen in testing).
+# The pipe depends on this resource, so it is destroyed first.
+resource "terraform_data" "subscription_cleanup" {
+  input = {
+    project = var.gcp_project_id
+    topic   = google_pubsub_topic.logs.name
+  }
+
+  provisioner "local-exec" {
+    when        = destroy
+    on_failure  = continue
+    working_dir = "${path.module}/.."
+    command     = "python3 tools/wait_subscriptions_gone.py --project ${self.input.project} --topic ${self.input.topic}"
+  }
+
+  depends_on = [
+    google_project_iam_member.clickpipes,
+    google_project_iam_custom_role.clickpipes,
+    google_service_account_key.clickpipes,
+    google_pubsub_topic_iam_member.sink_publisher,
+  ]
 }

@@ -8,7 +8,7 @@
 -- Step 1: create the typed table (see sql/examples/l2_gke_upgrades_v1.sql), then its MV from L0
 --   limited to _publish_time >= T (T = now + 5..10 min).
 CREATE MATERIALIZED VIEW gcl.{{L2}}_mv TO gcl.{{L2}}
-DEFINER = default SQL SECURITY DEFINER
+DEFINER = {{MV_DEFINER}} SQL SECURITY DEFINER
 AS
 -- WITH ... SELECT ... (typed columns) ...
 FROM gcl.gcl_landing_v1
@@ -30,8 +30,12 @@ SELECT count(), uniqExact(MessageId) FROM gcl.{{L2}};   -- equal: no duplicates
 -- Rework an L2 (new columns, new sort key) ------------------------------------------------------------
 -- Same as above with a new versioned name ({{L2}} -> {{L2_NEW}}): new table, boundary MV from L0 (>= T),
 -- backfill from L0. For rows older than the L0 retention, copy them from the old L2, only before the
--- oldest publish time still in L0 so the two backfills do not overlap:
--- INSERT INTO new SELECT ... FROM old
--- WHERE PublishTime < (SELECT min(_publish_time) FROM gcl.gcl_landing_v1)   -- converting columns as needed
+-- oldest publish time still in L0 so the two backfills do not overlap. Read that time ONCE, before the
+-- L0 backfill, and use the same value {{L0_MIN}} in both steps: L0 keeps expiring while you work.
+SELECT min(_publish_time) AS l0_min FROM gcl.gcl_landing_v1;   -- -> {{L0_MIN}}
+-- L0 backfill: as in Step 2, with _publish_time >= toDateTime64('{{L0_MIN}}', 3, 'UTC') AND < T.
+-- Old L2 copy:
+-- INSERT INTO gcl.{{L2_NEW}} SELECT ... FROM gcl.{{L2}}
+-- WHERE PublishTime < toDateTime64('{{L0_MIN}}', 3, 'UTC')   -- converting columns as needed
 -- Then switch the ClickStack source, and after the rollback window:
 -- DROP VIEW gcl.{{L2}}_mv; DROP TABLE gcl.{{L2}};

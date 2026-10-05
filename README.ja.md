@@ -48,9 +48,9 @@ flowchart TD
 | ドキュメント | 内容 |
 |---|---|
 | [設計](docs/ja/design.md) | 要点、層の役割、L2 を作る判断、費用の見積もり方、利用者の環境で決めること、設計の詳細 |
-| [導入](docs/ja/setup.md) | Terraform での構築、clickhousectl と gcloud での構築（Terraform を使えない環境）、本番ログへの切り替え手順 |
-| [ハンズオン](docs/ja/hands-on.md) | ローカルの `clickhouse local` だけで SQL を動かす第 1 部と、実環境に構築して ClickStack で検索する第 2 部 |
-| [運用](docs/ja/operations.md) | 日常の確認、ノイズの除去、L2 と L3、MV のエラーへの対処、避ける操作、L0・L1 の作り直し（付録） |
+| [導入](docs/ja/setup.md) | 始める前の注意、Terraform での構築、作成後の設定の変更、削除 |
+| [ハンズオン](docs/ja/hands-on.md) | ローカルの `clickhouse local` だけで SQL を動かす第 1 部、Terraform で実環境に構築して ClickStack で検索する第 2 部、同じものを gcloud と clickhousectl で 1 つずつ作る第 3 部 |
+| [運用](docs/ja/operations.md) | 日常の確認、ノイズの除去、L2 と L3、MV のエラーへの対処、避ける操作、保持期間の変更、本番ログへの切り替え、L0・L1 の作り直し（付録） |
 | [検証記録](docs/ja/findings.md) | 実機で確かめた挙動と数値 |
 
 ## クイックスタート
@@ -64,20 +64,16 @@ verify/local_e2e.sh 20000
 L0、L1、L2、L3、ノイズの集計テーブルの件数を照合し、日本語の全文検索の確認結果とともに表で表示します。
 
 実環境に構築する場合は、[導入](docs/ja/setup.md) の手順で Terraform を使います。
-Terraform を使えない環境では `cli/deploy.sh`（gcloud と clickhousectl）で構築できます。
-
-```bash
-cd terraform
-cp terraform.tfvars.example terraform.tfvars   # gcp_project_id と clickhouse_service_id を入れる
-terraform init && terraform apply
-```
+先に導入の「始める前に」を読みます。
+`terraform apply` を実行した時点から、シンクはプロジェクトの全ログを Pub/Sub へ送り、Pub/Sub の料金がかかります。
+まず検証用のプロジェクトで試します。
+gcloud と clickhousectl で 1 つずつ作りながら仕組みを確かめる手順は、[ハンズオン](docs/ja/hands-on.md) の第 3 部にあります。
 
 ## ディレクトリ
 
 | パス | 内容 |
 |---|---|
-| `cli/` | Terraform を使えない環境向けに、同じ構成を `gcloud` と `clickhousectl` で構築する（`deploy.sh`、`destroy.sh`） |
-| `terraform/` | トピック、シンク、IAM、ClickPipes のサービスアカウント、テーブルと MV（`sql/` を実行）、ClickPipe、ClickStack のソースとダッシュボード |
+| `terraform/` | トピック、シンク、IAM、ClickPipes のサービスアカウント、テーブルと MV（`sql/` を実行）、ClickPipe、ClickStack のソースとダッシュボード。`terraform/tests/` に plan だけで動くテスト（`terraform test`、認証情報は不要） |
 | `sql/` | L0、L1、MV1、L3（分単位の件数）、ノイズの件数の DDL。`{{VAR}}` は適用時に置き換える |
 | `sql/examples/` | 任意の L2 の例（監査ログ、GKE のアップグレード通知） |
 | `sql/runbooks/` | 変更の種類ごとの SQL ひな型 |
@@ -86,6 +82,7 @@ terraform init && terraform apply
 | `verify/completeness.sh` | 公開したメッセージ ID の全件と L0、L1 を突き合わせる |
 | `verify/checks.sql` | 遅延、処理が停滞したバッチ、重複、遅延到着、解析の状態などの定期確認 |
 | `tools/chq.py` | SQL ファイルを 1 文ずつ `clickhousectl cloud service query` で実行する |
+| `tools/wait_subscriptions_gone.py` | ClickPipes が管理サブスクリプションを削除し終えるのを待つ（`terraform destroy` が使う） |
 
 ## ライセンス
 
