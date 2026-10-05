@@ -26,27 +26,37 @@ Google Cloud Logging（以下 Cloud Logging）のログを Pub/Sub と ClickPipe
 ## 全体像
 
 ```mermaid
-%%{init: {"flowchart": {"wrappingWidth": 460}}}%%
-flowchart TD
-  subgraph GCP["Google Cloud"]
-    CL["Cloud Logging<br/>プロジェクトの全ログ"] -->|"Log Router のシンク"| T["Pub/Sub トピック<br/>メッセージ保持なし"]
+flowchart LR
+  CL["Cloud Logging<br/>プロジェクトの全ログ"] -->|"Log Router のシンク"| T["Pub/Sub トピック<br/>メッセージ保持なし"]
+  T -->|"管理サブスクリプション"| CP["ClickPipe<br/>仮想列だけを INSERT"]
+  subgraph CH["ClickHouse Cloud"]
+    direction LR
+    L0["L0 着地<br/>受け取ったまま"] -->|"MV で解析"| L1["L1 検索<br/>共通項目は列、中身は属性"]
   end
-  T -->|"管理サブスクリプション"| CP["ClickPipe<br/>JSONEachRow、仮想列だけ"]
-  subgraph CH["ClickHouse Cloud（データベース gcl）"]
-    L0["<b>L0</b> gcl_landing_v1, MergeTree<br/>_message_id String<br/>_publish_time DateTime64(3)<br/>_attributes Map(String, String)<br/>_raw_message String<br/><i>日ごとのパーティション、保持 7 日</i>"]
-    L1["<b>L1</b> gcl_logs_v1, MergeTree<br/>Timestamp, ReceiveTimestamp, PublishTime, InsertedAt<br/>SeverityText, SeverityNumber<br/>ServiceName, ResourceType, ProjectId, LogName, LogId<br/>Body, PayloadType, ProtoPayload<br/>TraceId, SpanId, TraceSampled<br/>HttpMethod, HttpStatus, HttpUrl, HttpLatencySeconds, HttpUserAgent, HttpRemoteIp<br/>SourceFile, SourceLine, SourceFunction, OperationId, OperationProducer<br/>InsertId, MessageId, ParseOk, ParserVersion<br/>ResourceAttributes, LogAttributes: Map, key=value の ALIAS 列付き<br/><i>ORDER BY 5 分単位の時刻, ServiceName, Timestamp</i><br/><i>テキストインデックス：lower(Body) は ngrams(2)、属性のキーと key=value</i><br/><i>保持 400 日</i>"]
-    N["<b>ノイズの件数</b> gcl_noise_1m_v1<br/>Minute, Rule, ServiceName, Principal, Cnt<br/><i>AggregatingMergeTree</i>"]
-    L3["<b>L3</b> gcl_logs_1m_v1 （任意）<br/>Minute, ServiceName, SeverityText, HttpStatus, Cnt<br/><i>AggregatingMergeTree</i>"]
-    L2["<b>L2</b> 型付きテーブル （任意）<br/>例 audit_events_v1: Timestamp, Principal, ServiceName,<br/>MethodName, ResourceName, CallerIp, StatusCode<br/><i>ORDER BY Principal, Timestamp</i>"]
-  end
-  CP -->|"約 5 秒ごとに INSERT"| L0
-  L0 -->|"MV1：1 回だけ解析、ノイズを除く"| L1
-  L0 -->|"ノイズ用 MV"| N
-  L0 -.->|"MV（L1 で足りないときだけ）"| L2
-  L1 -.->|"MV"| L3
-  L1 --> CS["ClickStack のログソース"]
-  L2 -.-> CS
+  CP --> L0
+  L1 --> CS["ClickStack<br/>検索とダッシュボード"]
 ```
+
+```mermaid
+flowchart LR
+  L0["gcl_landing_v1<br/>L0・保持 7 日"]
+  MV1(["gcl_logs_v1_mv<br/>解析、ノイズを除く"])
+  L1["gcl_logs_v1<br/>L1・保持 400 日"]
+  NMV(["gcl_noise_1m_v1_mv<br/>ノイズだけを数える"])
+  N["gcl_noise_1m_v1<br/>ノイズの分単位の件数"]
+  RMV(["gcl_logs_1m_v1_mv"])
+  L3["gcl_logs_1m_v1<br/>L3・分単位の件数"]
+  L2MV(["L2 の MV"])
+  L2["L2 型付きテーブル<br/>例 audit_events_v1"]
+  L0 --> MV1 --> L1 --> RMV --> L3
+  L0 --> NMV --> N
+  L0 -.-> L2MV -.-> L2
+  classDef opt stroke-dasharray: 5 5
+  class L2MV,L2 opt
+```
+
+四角はテーブル、丸い箱は MV、点線は任意（L1 で要件を満たせないときだけ作る）です。
+L2 の MV は L1 ではなく L0 を読みます。
 
 | 層 | 必須か | 内容 | 運用での変更 | SQL |
 |---|---|---|---|---|
@@ -236,6 +246,53 @@ ClickHouse は、他のログと合わせて分析するための写しとして
 - このロールは、プロジェクト内のトピックの一覧と、購読の作成、受信、削除を許します。ClickPipes は管理サブスクリプションのほかに、確認用の一時的な購読（`clickpipes-discovery-<uuid>`）も作るためです。範囲を狭めたい場合は、ログの送出専用のプロジェクトにトピックを置きます。
 - Pub/Sub が VPC Service Controls の境界の中にある場合、境界の外にある ClickPipes から読めるかを確かめます。（PoC で確認）
 - ClickHouse Cloud のサービスは、トピックのメッセージが保存されるリージョンと同じリージョンに置きます。リージョンをまたぐと、配信に転送料がかかります。（公式資料：[料金](https://cloud.google.com/pubsub/pricing)）
+
+### テーブル定義
+
+列と設定の正本は `sql/` の DDL です。
+ここでは役割ごとにまとめます。
+
+**L0 `gcl_landing_v1`**（`sql/10_landing_v1.sql`）
+
+| 列 | 型 | 内容 |
+|---|---|---|
+| `_message_id` | String | Pub/Sub のメッセージ ID |
+| `_publish_time` | DateTime64(3) | Pub/Sub の公開時刻。境界時刻 T の基準 |
+| `_attributes` | Map(String, String) | メッセージの属性 |
+| `_raw_message` | String | LogEntry の JSON そのまま |
+
+MergeTree、公開日でパーティション、`ORDER BY _publish_time`、保持 7 日（`landing_ttl_days`）。
+
+**L1 `gcl_logs_v1`**（`sql/20_logs_v1.sql`、解析は `sql/30_logs_v1_mv.sql`）
+
+| 役割 | 列 |
+|---|---|
+| 時刻 | `Timestamp`、`ReceiveTimestamp`、`PublishTime`、`InsertedAt` |
+| 重大度 | `SeverityText`、`SeverityNumber` |
+| 発生元 | `ServiceName`、`ResourceType`、`ProjectId`、`LogName`、`LogId` |
+| 本文 | `Body`、`PayloadType`、`ProtoPayload` |
+| トレース | `TraceId`、`SpanId`、`TraceSampled` |
+| HTTP | `HttpMethod`、`HttpStatus`、`HttpUrl`、`HttpLatencySeconds`、`HttpUserAgent`、`HttpRemoteIp` |
+| ソースと操作 | `SourceFile`、`SourceLine`、`SourceFunction`、`OperationId`、`OperationProducer` |
+| 識別子と解析の状態 | `InsertId`、`MessageId`、`ParseOk`、`ParserVersion` |
+| 属性 | `ResourceAttributes`、`LogAttributes`（Map）、`ResourceAttributeItems`、`LogAttributeItems`（`key=value` の ALIAS 列） |
+
+| 設定 | 値 |
+|---|---|
+| エンジンとパーティション | MergeTree、`Timestamp` の日付 |
+| 並び順 | `(toStartOfFiveMinutes(Timestamp), ServiceName, Timestamp)`（ClickStack の既定と同じ） |
+| テキストインデックス | `lower(Body)` は `ngrams(2)`、`TraceId` と属性のキー・`key=value` は `array` |
+| 保持 | 400 日（`logs_ttl_days`） |
+| Map の保存形式 | マージ後の部分だけ `with_buckets` |
+
+**集計テーブル**
+
+| テーブル | 元 | 列 | エンジン |
+|---|---|---|---|
+| `gcl_logs_1m_v1`（L3、`sql/40_rollup_1m_v1.sql`） | L1 | `Minute`、`ServiceName`、`SeverityText`、`HttpStatus`、`Cnt` | AggregatingMergeTree |
+| `gcl_noise_1m_v1`（ノイズの件数、`sql/50_noise_rollup_v1.sql`） | L0 | `Minute`、`Rule`、`ServiceName`、`Principal`、`Cnt` | AggregatingMergeTree |
+
+L2 の例は `sql/examples/` にあります（`audit_events_v1` は操作者の順、`gke_upgrades_v1` は GKE のアップグレード通知）。
 
 ### L0：着地テーブル
 

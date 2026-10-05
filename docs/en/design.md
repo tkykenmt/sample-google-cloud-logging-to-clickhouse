@@ -25,27 +25,37 @@ Deployment is in [Setup](setup.md), a guided run is in the [Hands-on](hands-on.m
 ## Overview
 
 ```mermaid
-%%{init: {"flowchart": {"wrappingWidth": 460}}}%%
-flowchart TD
-  subgraph GCP["Google Cloud"]
-    CL["Cloud Logging<br/>every log of the project"] -->|"Log Router sink"| T["Pub/Sub topic<br/>no message retention"]
+flowchart LR
+  CL["Cloud Logging<br/>every log of the project"] -->|"Log Router sink"| T["Pub/Sub topic<br/>no message retention"]
+  T -->|"managed subscription"| CP["ClickPipe<br/>inserts virtual columns only"]
+  subgraph CH["ClickHouse Cloud"]
+    direction LR
+    L0["L0 landing<br/>as received"] -->|"MV parses"| L1["L1 search<br/>envelope as columns, payload as attributes"]
   end
-  T -->|"managed subscription"| CP["ClickPipe<br/>JSONEachRow, virtual columns only"]
-  subgraph CH["ClickHouse Cloud, database gcl"]
-    L0["<b>L0</b> gcl_landing_v1, MergeTree<br/>_message_id String<br/>_publish_time DateTime64(3)<br/>_attributes Map(String, String)<br/>_raw_message String<br/><i>PARTITION BY day, TTL 7 days</i>"]
-    L1["<b>L1</b> gcl_logs_v1, MergeTree<br/>Timestamp, ReceiveTimestamp, PublishTime, InsertedAt<br/>SeverityText, SeverityNumber<br/>ServiceName, ResourceType, ProjectId, LogName, LogId<br/>Body, PayloadType, ProtoPayload<br/>TraceId, SpanId, TraceSampled<br/>HttpMethod, HttpStatus, HttpUrl, HttpLatencySeconds, HttpUserAgent, HttpRemoteIp<br/>SourceFile, SourceLine, SourceFunction, OperationId, OperationProducer<br/>InsertId, MessageId, ParseOk, ParserVersion<br/>ResourceAttributes, LogAttributes: Map, with key=value ALIAS columns<br/><i>ORDER BY 5-minute bucket, ServiceName, Timestamp</i><br/><i>text indexes: lower(Body) ngrams(2), attribute keys and items</i><br/><i>TTL 400 days</i>"]
-    N["<b>Noise counts</b> gcl_noise_1m_v1<br/>Minute, Rule, ServiceName, Principal, Cnt<br/><i>AggregatingMergeTree</i>"]
-    L3["<b>L3</b> gcl_logs_1m_v1 (optional)<br/>Minute, ServiceName, SeverityText, HttpStatus, Cnt<br/><i>AggregatingMergeTree</i>"]
-    L2["<b>L2</b> typed table (optional)<br/>e.g. audit_events_v1: Timestamp, Principal, ServiceName,<br/>MethodName, ResourceName, CallerIp, StatusCode<br/><i>ORDER BY Principal, Timestamp</i>"]
-  end
-  CP -->|"INSERT every ~5 s"| L0
-  L0 -->|"MV1: parse once, drop noise"| L1
-  L0 -->|"noise MV"| N
-  L0 -.->|"MV, only when L1 is not enough"| L2
-  L1 -.->|"MV"| L3
-  L1 --> CS["ClickStack log source"]
-  L2 -.-> CS
+  CP --> L0
+  L1 --> CS["ClickStack<br/>search and dashboards"]
 ```
+
+```mermaid
+flowchart LR
+  L0["gcl_landing_v1<br/>L0, 7-day TTL"]
+  MV1(["gcl_logs_v1_mv<br/>parse, drop noise"])
+  L1["gcl_logs_v1<br/>L1, 400-day TTL"]
+  NMV(["gcl_noise_1m_v1_mv<br/>count noise only"])
+  N["gcl_noise_1m_v1<br/>noise counts per minute"]
+  RMV(["gcl_logs_1m_v1_mv"])
+  L3["gcl_logs_1m_v1<br/>L3, counts per minute"]
+  L2MV(["L2 MV"])
+  L2["L2 typed table<br/>e.g. audit_events_v1"]
+  L0 --> MV1 --> L1 --> RMV --> L3
+  L0 --> NMV --> N
+  L0 -.-> L2MV -.-> L2
+  classDef opt stroke-dasharray: 5 5
+  class L2MV,L2 opt
+```
+
+Boxes are tables, rounded boxes are MVs, dashed ones are optional (built only when L1 cannot meet a requirement).
+The L2 MV reads L0, not L1.
 
 | Layer | Required | Contents | Changes during operation | SQL |
 |---|---|---|---|---|
@@ -236,6 +246,53 @@ Treat ClickHouse as a copy for analysis alongside other logs.
 - The role allows listing topics and creating, consuming and deleting subscriptions anywhere in the project, because ClickPipes also creates short-lived discovery subscriptions (`clickpipes-discovery-<uuid>`) besides the managed one. To narrow it, put the topic in a project dedicated to log export.
 - If Pub/Sub is inside a VPC Service Controls perimeter, check whether ClickPipes outside the perimeter can read it. (PoC)
 - Place the ClickHouse Cloud service in the same region where the topic stores messages. Crossing regions adds egress charges to delivery. (docs: [pricing](https://cloud.google.com/pubsub/pricing))
+
+### Table definitions
+
+The DDL in `sql/` is the source of truth for columns and settings.
+This section groups them by role.
+
+**L0 `gcl_landing_v1`** (`sql/10_landing_v1.sql`)
+
+| Column | Type | Contents |
+|---|---|---|
+| `_message_id` | String | Pub/Sub message ID |
+| `_publish_time` | DateTime64(3) | Pub/Sub publish time; the basis of boundary time T |
+| `_attributes` | Map(String, String) | Message attributes |
+| `_raw_message` | String | The LogEntry JSON as received |
+
+MergeTree, partitioned by publish date, `ORDER BY _publish_time`, 7-day TTL (`landing_ttl_days`).
+
+**L1 `gcl_logs_v1`** (`sql/20_logs_v1.sql`, parsed by `sql/30_logs_v1_mv.sql`)
+
+| Role | Columns |
+|---|---|
+| Time | `Timestamp`, `ReceiveTimestamp`, `PublishTime`, `InsertedAt` |
+| Severity | `SeverityText`, `SeverityNumber` |
+| Source | `ServiceName`, `ResourceType`, `ProjectId`, `LogName`, `LogId` |
+| Body | `Body`, `PayloadType`, `ProtoPayload` |
+| Trace | `TraceId`, `SpanId`, `TraceSampled` |
+| HTTP | `HttpMethod`, `HttpStatus`, `HttpUrl`, `HttpLatencySeconds`, `HttpUserAgent`, `HttpRemoteIp` |
+| Code and operation | `SourceFile`, `SourceLine`, `SourceFunction`, `OperationId`, `OperationProducer` |
+| IDs and parser state | `InsertId`, `MessageId`, `ParseOk`, `ParserVersion` |
+| Attributes | `ResourceAttributes`, `LogAttributes` (Map), `ResourceAttributeItems`, `LogAttributeItems` (`key=value` ALIAS columns) |
+
+| Setting | Value |
+|---|---|
+| Engine and partitions | MergeTree, by `Timestamp` date |
+| Sort key | `(toStartOfFiveMinutes(Timestamp), ServiceName, Timestamp)` (the ClickStack default) |
+| Text indexes | `ngrams(2)` on `lower(Body)`; `array` on `TraceId` and on attribute keys and `key=value` items |
+| Retention | 400 days (`logs_ttl_days`) |
+| Map serialization | `with_buckets` for merged parts only |
+
+**Aggregate tables**
+
+| Table | Reads | Columns | Engine |
+|---|---|---|---|
+| `gcl_logs_1m_v1` (L3, `sql/40_rollup_1m_v1.sql`) | L1 | `Minute`, `ServiceName`, `SeverityText`, `HttpStatus`, `Cnt` | AggregatingMergeTree |
+| `gcl_noise_1m_v1` (noise counts, `sql/50_noise_rollup_v1.sql`) | L0 | `Minute`, `Rule`, `ServiceName`, `Principal`, `Cnt` | AggregatingMergeTree |
+
+L2 examples are in `sql/examples/` (`audit_events_v1` sorted by principal, `gke_upgrades_v1` for GKE upgrade notifications).
 
 ### L0: landing table
 
