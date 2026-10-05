@@ -3,7 +3,8 @@
 [English](../en/setup.md) | 日本語
 
 Terraform で、Google Cloud 側のリソース、ClickHouse のテーブルと MV、ClickPipe、ClickStack のソースとダッシュボードを作ります。
-導入の手順はこのページの「手順」だけです。
+Terraform を使える場合の導入の手順は、このページの「手順」だけです。
+Terraform を使えない場合は、同じ構成を画面だけで作る [ブラウザで導入する](setup-console.md) を使います（どちらか一方だけを実行します）。
 gcloud と clickhousectl で 1 つずつ作りながら仕組みを確かめる手順は、[ハンズオン](hands-on.md) の第 3 部にあります。
 設計の理由は [設計](design.md) にあります。
 
