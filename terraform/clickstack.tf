@@ -4,14 +4,15 @@ locals {
 
 # Log source on L1. Column mapping follows the ClickStack OTel log schema used by gcl_logs_v1.
 resource "clickhouse_clickstack_source" "logs" {
-  count         = local.clickstack ? 1 : 0
+  count = local.clickstack ? 1 : 0
+
   name          = var.clickstack_source_name
   kind          = "log"
   connection_id = var.clickstack_connection_id
 
   from = {
-    database_name = "gcl"
-    table_name    = "gcl_logs_v1"
+    database_name = local.database
+    table_name    = local.logs_table
   }
 
   timestamp_value_expression           = "Timestamp"
@@ -38,6 +39,7 @@ resource "clickhouse_clickstack_source" "logs" {
 
 resource "clickhouse_clickstack_dashboard" "overview" {
   count = local.clickstack && var.create_dashboard ? 1 : 0
+
   dashboard_json = templatefile("${path.module}/clickstack/dashboard.json.tftpl", {
     source_id = clickhouse_clickstack_source.logs[0].id
   })

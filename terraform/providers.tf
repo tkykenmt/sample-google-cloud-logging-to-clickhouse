@@ -1,19 +1,10 @@
-terraform {
-  required_version = ">= 1.5"
-  required_providers {
-    google = {
-      source  = "hashicorp/google"
-      version = ">= 6.0"
-    }
-    clickhouse = {
-      source  = "ClickHouse/clickhouse"
-      version = ">= 3.34"
-    }
-  }
-}
-
 provider "google" {
   project = var.gcp_project_id
+
+  default_labels = {
+    managed-by = "terraform"
+    app        = "gcl-to-clickhouse"
+  }
 }
 
 # Credentials come from CLICKHOUSE_ORG_ID, CLICKHOUSE_CLOUD_API_KEY and CLICKHOUSE_CLOUD_API_SECRET.

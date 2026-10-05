@@ -1,16 +1,18 @@
 *.json
 !**/package.json
+!terraform/tests/fixtures/*.json
 *.txt
 *.log
 .env
 .clickhouse/
 __pycache__/
 # Terraform
-terraform/.terraform/
+.terraform/
+.terraform.tfstate.lock.info
 *.tfstate
 *.tfstate.*
 *.tfplan
-terraform/terraform.tfvars
+*.tfvars
+!*.tfvars.example
 crash.log
-cli/.env
 clickpipes-key.json
