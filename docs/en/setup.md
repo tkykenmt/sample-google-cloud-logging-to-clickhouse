@@ -38,6 +38,7 @@ For the same reason, changing a TTL or similar value after creation does not rea
 - A ClickHouse Cloud API key with write access, and the organization ID.
 - Permissions in the Google Cloud project to create topics, sinks, service accounts, custom roles, and IAM bindings.
 - Terraform 1.9 or later, `gcloud`, `python3`, and `clickhousectl` on your machine.
+- The first `tools/chq.py` run makes `clickhousectl` create a Query API endpoint and key on the service (it prints `Provisioning Query API endpoint + key`).
 - If an organization policy (`iam.disableServiceAccountKeyCreation`) blocks service account key creation, a key file created through your approved process (`service_account_key_file`).
 
 ## Steps
@@ -88,7 +89,7 @@ terraform plan
 ```
 
 Check the resources to be created and the sink `filter` in the plan output.
-Without ClickStack, 9 resources are created.
+Without ClickStack, 10 resources are created (including `terraform_data.subscription_cleanup`, which waits during destroy).
 
 ```bash
 terraform apply
@@ -143,6 +144,6 @@ python3 tools/chq.py -q "DROP DATABASE IF EXISTS gcl SYNC"
 
 - `terraform destroy` removes only what Terraform created.
 - Delete the pipe before the database. In the other order, the pipe's inserts keep failing until it is deleted.
-- Deleting the ClickPipe also deletes its managed subscription.
+- When the ClickPipe is deleted, ClickPipes deletes its managed subscription asynchronously. `terraform destroy` waits for that (`tools/wait_subscriptions_gone.py`, up to 5 minutes) before removing the key and the role binding. Without the wait, the managed subscription was left behind, attached to the deleted topic (`_deleted-topic_`).
 - The database `gcl` created by `sql/` is not managed by Terraform; remove it with `DROP DATABASE`.
 - A deleted custom role stays soft-deleted and can be restored within 7 days. Its ID cannot be reused until it is permanently deleted ([Deleting a custom role](https://cloud.google.com/iam/docs/creating-custom-roles#deleting-custom-role)). To try again right away, change `clickpipes_role_id`.

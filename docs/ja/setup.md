@@ -38,6 +38,7 @@ ClickHouse の Terraform プロバイダには DDL を実行するリソース�
 - ClickHouse Cloud の API キー（書き込みができる権限）と組織 ID。
 - Google Cloud のプロジェクトで、トピック、シンク、サービスアカウント、カスタムロール、IAM を作れる権限。
 - ローカル環境に Terraform 1.9 以降、`gcloud`、`python3`、`clickhousectl`。
+- `tools/chq.py` を初めて実行すると、`clickhousectl` がそのサービスに Query API のエンドポイントとキーを作ります（`Provisioning Query API endpoint + key` と表示されます）。
 - サービスアカウントの鍵の作成を組織のポリシー（`iam.disableServiceAccountKeyCreation`）で禁止している場合は、許可された手順で作った鍵ファイルを用意します（`service_account_key_file`）。
 
 ## 手順
@@ -88,7 +89,7 @@ terraform plan
 ```
 
 `plan` の出力で、作られるリソースとシンクのフィルタ（`filter`）を確かめます。
-ClickStack を使わない場合、作られるリソースは 9 個です。
+ClickStack を使わない場合、作られるリソースは 10 個です（削除時の待ち合わせ用の `terraform_data.subscription_cleanup` を含む）。
 
 ```bash
 terraform apply
@@ -143,6 +144,6 @@ python3 tools/chq.py -q "DROP DATABASE IF EXISTS gcl SYNC"
 
 - `terraform destroy` は、Terraform が作ったリソースだけを削除します。
 - 先にパイプを削除してからデータベースを削除します。逆の順だと、削除までの間にパイプの INSERT が失敗し続けます。
-- ClickPipe を削除すると、管理サブスクリプションも削除されます。
+- ClickPipe を削除すると、ClickPipes が管理サブスクリプションを非同期で削除します。`terraform destroy` は、その削除が終わるのを待ってから（`tools/wait_subscriptions_gone.py`、最大 5 分）、鍵と権限を削除します。待たずに鍵や権限を消すと、管理サブスクリプションが削除済みのトピック（`_deleted-topic_`）を指したまま残りました。
 - `sql/` で作ったデータベース `gcl` は Terraform の管理外なので、`DROP DATABASE` で削除します。
 - 削除したカスタムロールは削除済みの状態で残り、7 日以内なら復元できます。完全に削除されるまで、同じ ID では作り直せません（[カスタムロールの削除](https://cloud.google.com/iam/docs/creating-custom-roles#deleting-custom-role)）。続けて試す場合は `clickpipes_role_id` を変えます。

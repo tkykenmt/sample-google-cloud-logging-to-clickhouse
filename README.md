@@ -81,6 +81,7 @@ To build the pieces one at a time with gcloud and clickhousectl and see what eac
 | `verify/completeness.sh` | Reconciles every published message ID with L0 and L1 |
 | `verify/checks.sql` | Periodic checks: latency, stuck batches, duplicates, late arrivals, parser health |
 | `tools/chq.py` | Runs SQL files one statement at a time through `clickhousectl cloud service query` |
+| `tools/wait_subscriptions_gone.py` | Waits until ClickPipes has deleted its managed subscription (used by `terraform destroy`) |
 
 ## License
 

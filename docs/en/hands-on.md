@@ -208,7 +208,7 @@ rm -f sent_ids.txt
 ```
 
 Delete the pipe before the database.
-Deleting the ClickPipe also deletes its managed subscription.
+`terraform destroy` waits until ClickPipes has deleted the managed subscription before it removes the key and the role binding.
 Deleting the sink stops exports to the topic.
 Clean up here before part 3 as well (part 3 uses the same database `gcl`).
 
@@ -359,7 +359,8 @@ verify/completeness.sh sent_ids.txt
 Remove only the resources with part 3's names, in reverse order of creation.
 
 ```bash
-clickhousectl cloud clickpipe delete "$CH_SERVICE_ID" $PIPE_ID   # also deletes the managed subscription
+clickhousectl cloud clickpipe delete "$CH_SERVICE_ID" $PIPE_ID
+python3 tools/wait_subscriptions_gone.py --project $P --topic $TOPIC   # wait for the managed subscription to go
 python3 tools/chq.py -q "DROP DATABASE IF EXISTS gcl SYNC"
 gcloud logging sinks delete $SINK --project $P
 gcloud pubsub topics delete $TOPIC --project $P
@@ -370,6 +371,8 @@ gcloud iam roles delete $ROLE --project $P
 rm -f $KEY sent_ids.txt
 ```
 
+Deleting the pipe returns at once; ClickPipes then deletes the managed subscription with the service account.
+Removing the role or the service account before that leaves the subscription behind, attached to the deleted topic, so the second line waits.
 Delete the ClickStack source in the UI.
 Deleting the service account also invalidates its key.
 A deleted custom role can be restored within 7 days, and its ID cannot be reused until it is permanently deleted.

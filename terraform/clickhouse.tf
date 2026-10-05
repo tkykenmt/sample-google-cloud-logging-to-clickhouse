@@ -71,6 +71,7 @@ resource "clickhouse_clickpipe" "gcl" {
 
   depends_on = [
     terraform_data.schema,
+    terraform_data.subscription_cleanup,
     google_project_iam_member.clickpipes,
     google_pubsub_topic_iam_member.sink_publisher,
   ]

@@ -280,6 +280,24 @@ GKE のアップグレード通知の表（ノードプール、版、件数、�
 | ClickStack のソース（Terraform で作成） | 「タイムアウト」の検索で、日本語の本文のログが返った |
 | `terraform destroy`、`cli/destroy.sh` | トピック、シンク、管理サブスクリプション、サービスアカウント、パイプが消えた。カスタムロールは削除済み（復元できる状態）で残った |
 
+## 東京リージョンの新しいサービスへの構築（Terraform、2026-10-05）
+
+GCP の東京リージョン（`asia-northeast1`）に `clickhousectl cloud service create` で新しいサービス（26.6、メモリ 8 GB）を作り、何もない状態から [導入](setup.md) の手順で構築しました。
+トピックの保存先は `topic_storage_regions = ["asia-northeast1"]` で東京に限定し、シンクのフィルタはどの実ログにも一致しない値にして、合成ログだけを公開しました。
+
+| 手順 | 結果 |
+|---|---|
+| `terraform plan` | 作成 9 リソース（待ち合わせ用の `terraform_data.subscription_cleanup` を足す前） |
+| `terraform apply` | 約 57 秒で完了し、パイプは Running になった。トピックの保存先は `asia-northeast1` だけで、ラベル `managed-by=terraform` が付いた |
+| 管理サブスクリプション | ack 期限 60 秒、保持 7 日、順序付けあり、有効期限 31 日 |
+| 合成ログ 600 件（Lease 更新 2 割） | L0 で欠損 0、重複 0。L1 476 件とノイズの件数 124 件の合計が L0 と一致し、L3 の合計は L1 と一致した。GCE の ServiceName は VM の名前になった |
+| `verify/checks.sql` | 処理が停滞したバッチ 0、失敗した INSERT 0、`MessageId` の重複 0、公開から格納までの p99 は約 5.7 秒 |
+| `terraform destroy`（待ち合わせなし） | 9 リソースを削除したが、管理サブスクリプションが削除済みのトピック（`_deleted-topic_`）を指したまま残った。パイプの削除は 0 秒で返り、その直後に鍵と権限が削除されていた |
+| `terraform destroy`（待ち合わせあり） | パイプの削除後 23 秒で管理サブスクリプションが消えたのを確かめてから、鍵と権限を削除した。何も残らなかった |
+
+- `tools/chq.py` を新しいサービスに初めて実行したとき、`clickhousectl` が Query API のエンドポイントとキーを作った。
+- 同じプロジェクトには、この検証より前の日付の、`_deleted-topic_` を指した管理サブスクリプションが 2 つ残っていた。2026-10-02 の削除の確認では、この残り方を見落とした可能性がある。
+
 ## 未検証の項目
 
 - UI で「Only destination table」を選んだパイプでの動作（同じ権限のユーザーでの INSERT で代用した）

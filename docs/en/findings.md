@@ -280,6 +280,24 @@ Both procedures were run from creation to removal on a test project and service.
 | ClickStack source (created by Terraform) | Searching 「タイムアウト」 returned logs with Japanese bodies |
 | `terraform destroy`, `cli/destroy.sh` | The topic, sink, managed subscription, service account, and pipe were gone. The custom role remained soft-deleted (restorable) |
 
+## Deploying to a new service in Tokyo (Terraform, 2026-10-05)
+
+A new service (26.6, 8 GB memory) was created in GCP Tokyo (`asia-northeast1`) with `clickhousectl cloud service create`, and the [Setup](setup.md) steps were run against it from an empty state.
+Message storage was pinned to Tokyo with `topic_storage_regions = ["asia-northeast1"]`, the sink filter matched no real logs, and only synthetic logs were published.
+
+| Step | Result |
+|---|---|
+| `terraform plan` | 9 resources to add (before `terraform_data.subscription_cleanup` was added) |
+| `terraform apply` | Done in about 57 seconds; the pipe was Running. Message storage was `asia-northeast1` only, with the label `managed-by=terraform` |
+| Managed subscription | 60 s ack deadline, 7-day retention, ordering on, 31-day expiration |
+| 600 synthetic messages (20% Lease updates) | No loss and no duplicates in L0. L1 (476) plus the noise counts (124) equalled L0, and the L3 total equalled L1. The GCE ServiceName was the VM name |
+| `verify/checks.sql` | 0 stuck batches, 0 failed inserts, 0 `MessageId` duplicates, publish-to-insert p99 about 5.7 s |
+| `terraform destroy` (without the wait) | Removed 9 resources, but the managed subscription was left behind, attached to the deleted topic (`_deleted-topic_`). Deleting the pipe returned in 0 seconds and the key and binding were removed right after |
+| `terraform destroy` (with the wait) | Waited 23 seconds after deleting the pipe until the managed subscription was gone, then removed the key and binding. Nothing was left |
+
+- The first `tools/chq.py` run against the new service made `clickhousectl` create a Query API endpoint and key.
+- The same project held two older managed subscriptions attached to `_deleted-topic_`, dated before this test. The 2026-10-02 removal check may have missed this.
+
 ## Not tested
 
 - A pipe created with "Only destination table" in the UI (substituted by inserts from a user with the same permissions)

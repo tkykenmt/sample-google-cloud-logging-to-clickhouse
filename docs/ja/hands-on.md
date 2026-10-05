@@ -208,7 +208,7 @@ rm -f sent_ids.txt
 ```
 
 先にパイプを削除してから、データベースを削除します。
-ClickPipe を削除すると管理サブスクリプションも削除されます。
+`terraform destroy` は、ClickPipes が管理サブスクリプションを削除し終えるのを待ってから、鍵と権限を削除します。
 シンクを削除すると、トピックへの送出も止まります。
 続けて第 3 部を行う場合も、ここで削除してから始めます（第 3 部も同じデータベース `gcl` を使います）。
 
@@ -361,7 +361,8 @@ verify/completeness.sh sent_ids.txt
 第 3 部で作った名前のものだけを、作った順の逆に削除します。
 
 ```bash
-clickhousectl cloud clickpipe delete "$CH_SERVICE_ID" $PIPE_ID   # 管理サブスクリプションも消える
+clickhousectl cloud clickpipe delete "$CH_SERVICE_ID" $PIPE_ID
+python3 tools/wait_subscriptions_gone.py --project $P --topic $TOPIC   # 管理サブスクリプションが消えるのを待つ
 python3 tools/chq.py -q "DROP DATABASE IF EXISTS gcl SYNC"
 gcloud logging sinks delete $SINK --project $P
 gcloud pubsub topics delete $TOPIC --project $P
@@ -372,6 +373,8 @@ gcloud iam roles delete $ROLE --project $P
 rm -f $KEY sent_ids.txt
 ```
 
+パイプの削除は即座に返り、ClickPipes はそのあとでサービスアカウントを使って管理サブスクリプションを消します。
+消える前に権限やサービスアカウントを削除すると、管理サブスクリプションが削除済みのトピックを指したまま残るので、2 行目で待ちます。
 ClickStack のソースは画面から削除します。
 サービスアカウントを削除すると、その鍵も無効になります。
 削除したカスタムロールは 7 日以内なら復元でき、完全に削除されるまで同じ ID では作り直せません。

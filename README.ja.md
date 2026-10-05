@@ -82,6 +82,7 @@ gcloud と clickhousectl で 1 つずつ作りながら仕組みを確かめる�
 | `verify/completeness.sh` | 公開したメッセージ ID の全件と L0、L1 を突き合わせる |
 | `verify/checks.sql` | 遅延、処理が停滞したバッチ、重複、遅延到着、解析の状態などの定期確認 |
 | `tools/chq.py` | SQL ファイルを 1 文ずつ `clickhousectl cloud service query` で実行する |
+| `tools/wait_subscriptions_gone.py` | ClickPipes が管理サブスクリプションを削除し終えるのを待つ（`terraform destroy` が使う） |
 
 ## ライセンス
 
