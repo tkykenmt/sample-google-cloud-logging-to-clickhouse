@@ -14,27 +14,18 @@ Behavior may change, so repeat the checks in the [hands-on](docs/en/hands-on.md)
 ## Architecture
 
 ```mermaid
-%%{init: {"flowchart": {"wrappingWidth": 460}}}%%
-flowchart TD
-  subgraph GCP["Google Cloud"]
-    CL["Cloud Logging<br/>every log of the project"] -->|"Log Router sink"| T["Pub/Sub topic<br/>no message retention"]
+flowchart LR
+  CL["Cloud Logging<br/>every log of the project"] -->|"Log Router sink"| T["Pub/Sub topic<br/>no message retention"]
+  T -->|"managed subscription"| CP["ClickPipe<br/>inserts virtual columns only"]
+  subgraph CH["ClickHouse Cloud"]
+    direction LR
+    L0["L0 landing<br/>as received"] -->|"MV parses"| L1["L1 search<br/>envelope as columns, payload as attributes"]
   end
-  T -->|"managed subscription"| CP["ClickPipe<br/>JSONEachRow, virtual columns only"]
-  subgraph CH["ClickHouse Cloud, database gcl"]
-    L0["<b>L0</b> gcl_landing_v1, MergeTree<br/>_message_id String<br/>_publish_time DateTime64(3)<br/>_attributes Map(String, String)<br/>_raw_message String<br/><i>PARTITION BY day, TTL 7 days</i>"]
-    L1["<b>L1</b> gcl_logs_v1, MergeTree<br/>Timestamp, ReceiveTimestamp, PublishTime, InsertedAt<br/>SeverityText, SeverityNumber<br/>ServiceName, ResourceType, ProjectId, LogName, LogId<br/>Body, PayloadType, ProtoPayload<br/>TraceId, SpanId, TraceSampled<br/>HttpMethod, HttpStatus, HttpUrl, HttpLatencySeconds, HttpUserAgent, HttpRemoteIp<br/>SourceFile, SourceLine, SourceFunction, OperationId, OperationProducer<br/>InsertId, MessageId, ParseOk, ParserVersion<br/>ResourceAttributes, LogAttributes: Map, with key=value ALIAS columns<br/><i>ORDER BY 5-minute bucket, ServiceName, Timestamp</i><br/><i>text indexes: lower(Body) ngrams(2), attribute keys and items</i><br/><i>TTL 400 days</i>"]
-    N["<b>Noise counts</b> gcl_noise_1m_v1<br/>Minute, Rule, ServiceName, Principal, Cnt<br/><i>AggregatingMergeTree</i>"]
-    L3["<b>L3</b> gcl_logs_1m_v1 (optional)<br/>Minute, ServiceName, SeverityText, HttpStatus, Cnt<br/><i>AggregatingMergeTree</i>"]
-    L2["<b>L2</b> typed table (optional)<br/>e.g. audit_events_v1: Timestamp, Principal, ServiceName,<br/>MethodName, ResourceName, CallerIp, StatusCode<br/><i>ORDER BY Principal, Timestamp</i>"]
-  end
-  CP -->|"INSERT every ~5 s"| L0
-  L0 -->|"MV1: parse once, drop noise"| L1
-  L0 -->|"noise MV"| N
-  L0 -.->|"MV, only when L1 is not enough"| L2
-  L1 -.->|"MV"| L3
-  L1 --> CS["ClickStack log source"]
-  L2 -.-> CS
+  CP --> L0
+  L1 --> CS["ClickStack<br/>search and dashboards"]
 ```
+
+How the tables and MVs connect, and their columns, are in "Overview" and "Table definitions" of [Design](docs/en/design.md).
 
 | Layer | Required | Contents |
 |---|---|---|
