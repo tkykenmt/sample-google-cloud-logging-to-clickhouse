@@ -2,7 +2,6 @@
 
 [English](../en/hands-on.md) | 日本語
 
-3 部で構成します。
 どの部も、最後に作ったものを削除して終わります。
 
 - **第 1 部（ローカル環境、約 10 分）**：`clickhouse local` だけで、L0 から L1、L2、L3 までの SQL を動かし、日本語の検索とノイズの除外条件を確かめます。クラウドのリソースは作りません。
@@ -275,7 +274,7 @@ gcloud projects add-iam-policy-binding $P --member="serviceAccount:$SA_EMAIL" \
 gcloud iam service-accounts keys create $KEY --iam-account=$SA_EMAIL
 ```
 
-権限は公式の最小権限ロールの 7 つです（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）。
+権限は公式の最小権限ロールと同じです（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）。
 ClickPipes は管理サブスクリプション（`clickpipes-<パイプ ID>`）を自分で作って消すので、購読の作成と削除の権限が要ります。
 鍵ファイルはトピックを読むための認証情報です。
 パスワードと同じように扱い、Git に入れません（`.gitignore` で `*.json` を除外しています）。

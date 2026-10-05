@@ -232,7 +232,7 @@ ClickHouse は、他のログと合わせて分析するための写しとして
 
 **認証とネットワーク**
 
-- ClickPipes にはサービスアカウントの鍵ファイルを渡します。認証の方法は鍵ファイルだけです。公式の最小権限ロール（7 つの権限、[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）をプロジェクト単位で付け（`terraform/gcp.tf`）、鍵の保管とローテーションの担当を決めます。
+- ClickPipes にはサービスアカウントの鍵ファイルを渡します。認証の方法は鍵ファイルだけです。公式の最小権限ロール（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）をプロジェクト単位で付け（`terraform/gcp.tf`）、鍵の保管とローテーションの担当を決めます。
 - このロールは、プロジェクト内のトピックの一覧と、購読の作成、受信、削除を許します。ClickPipes は管理サブスクリプションのほかに、確認用の一時的な購読（`clickpipes-discovery-<uuid>`）も作るためです。範囲を狭めたい場合は、ログの送出専用のプロジェクトにトピックを置きます。
 - Pub/Sub が VPC Service Controls の境界の中にある場合、境界の外にある ClickPipes から読めるかを確かめます。（PoC で確認）
 - ClickHouse Cloud のサービスは、トピックのメッセージが保存されるリージョンと同じリージョンに置きます。リージョンをまたぐと、配信に転送料がかかります。（公式資料：[料金](https://cloud.google.com/pubsub/pricing)）
@@ -378,7 +378,7 @@ ClickStack は、検索窓に入れた語を `hasAllTokens(lower(Body), lower('�
 ### L2：型付きテーブル
 
 L2 は任意です。
-例は 2 つあります。
+例は `sql/examples/` にあります。
 
 - `sql/examples/l2_audit_events_v1.sql`：監査ログを操作者の順に並べた表。「操作者で頻繁に絞るのに、L1 の並び順では読み取り量が減らない」という判断基準に対応します。ハンズオンで使います。
 - `sql/examples/l2_gke_upgrades_v1.sql`：GKE のアップグレード通知を、ノードプール、状態、版、開始・終了時刻の列にした表。

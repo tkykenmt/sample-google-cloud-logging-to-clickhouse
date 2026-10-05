@@ -2,7 +2,6 @@
 
 English | [日本語](../ja/hands-on.md)
 
-Three parts.
 Each part ends by removing what it created.
 
 - **Part 1 (local, about 10 minutes)**: run the SQL from L0 through L1, L2, and L3 on `clickhouse local` alone, and check Japanese search and the noise rule. No cloud resources are created.
@@ -274,7 +273,7 @@ gcloud projects add-iam-policy-binding $P --member="serviceAccount:$SA_EMAIL" \
 gcloud iam service-accounts keys create $KEY --iam-account=$SA_EMAIL
 ```
 
-These are the seven permissions of the official least-privilege role ([Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)).
+These are the permissions of the official least-privilege role ([Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)).
 ClickPipes creates and deletes its managed subscription (`clickpipes-<pipe id>`) itself, so it needs subscription create and delete.
 The key file is the credential for reading the topic.
 Treat it like a password and keep it out of Git (`.gitignore` excludes `*.json`).

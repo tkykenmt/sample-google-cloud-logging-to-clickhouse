@@ -39,7 +39,7 @@ resource "google_pubsub_topic_iam_member" "sink_publisher" {
   member = google_logging_project_sink.to_pubsub.writer_identity
 }
 
-# The seven permissions of the official least-privilege role, granted at the project level as documented:
+# The permissions of the official least-privilege role, granted at the project level as documented:
 # https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth
 # ClickPipes lists topics and creates short-lived discovery subscriptions (clickpipes-discovery-<uuid>) as
 # well as its managed subscription (clickpipes-<pipe id>), so it needs more than subscriber rights.

@@ -232,7 +232,7 @@ Treat ClickHouse as a copy for analysis alongside other logs.
 
 **Authentication and network**
 
-- ClickPipes takes a service account key file; it is the only supported authentication. Grant the official least-privilege role (seven permissions, [Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)) at the project level (`terraform/gcp.tf`), and assign owners for key storage and rotation.
+- ClickPipes takes a service account key file; it is the only supported authentication. Grant the official least-privilege role ([Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)) at the project level (`terraform/gcp.tf`), and assign owners for key storage and rotation.
 - The role allows listing topics and creating, consuming and deleting subscriptions anywhere in the project, because ClickPipes also creates short-lived discovery subscriptions (`clickpipes-discovery-<uuid>`) besides the managed one. To narrow it, put the topic in a project dedicated to log export.
 - If Pub/Sub is inside a VPC Service Controls perimeter, check whether ClickPipes outside the perimeter can read it. (PoC)
 - Place the ClickHouse Cloud service in the same region where the topic stores messages. Crossing regions adds egress charges to delivery. (docs: [pricing](https://cloud.google.com/pubsub/pricing))
@@ -378,7 +378,7 @@ Example on about 1.1 million synthetic rows (verified):
 ### L2: typed tables
 
 An L2 is optional.
-There are two examples:
+The examples are in `sql/examples/`:
 
 - `sql/examples/l2_audit_events_v1.sql`: audit logs sorted by operator. It answers the signal "you filter on the operator often and the L1 sort key cannot skip data". Used in the hands-on.
 - `sql/examples/l2_gke_upgrades_v1.sql`: GKE upgrade notifications as node pool, state, versions, and start and end time columns.
