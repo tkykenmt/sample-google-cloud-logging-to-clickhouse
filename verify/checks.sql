@@ -17,6 +17,8 @@ ORDER BY minute;
 SELECT count() AS stuck_rows, min(_publish_time) AS oldest
 FROM gcl.gcl_landing_v1
 WHERE _publish_time BETWEEN now() - INTERVAL 1 DAY AND now() - INTERVAL 2 MINUTE
+  -- Rows dropped on purpose by a noise rule (sql/30 WHERE, sql/50, runbook 07) are not stuck: keep in sync.
+  AND JSONExtractString(_raw_message, 'protoPayload', 'methodName') != 'io.k8s.coordination.v1.leases.update'
   AND _message_id NOT IN (
       SELECT MessageId FROM gcl.gcl_logs_v1
       WHERE PublishTime BETWEEN now() - INTERVAL 1 DAY AND now());
@@ -44,8 +46,9 @@ WHERE PublishTime > now() - INTERVAL 1 DAY
 GROUP BY ParserVersion;
 
 -- 6. Failed pipe inserts (the pipe state can stay Running while a batch is being retried).
+--    query_log is per replica: read every replica of the service.
 SELECT toStartOfMinute(event_time) AS minute, countIf(type = 'ExceptionWhileProcessing') AS failed, countIf(type = 'QueryFinish') AS ok
-FROM system.query_log
+FROM clusterAllReplicas('default', system.query_log)
 WHERE user LIKE 'clickpipe:%' AND query_kind = 'Insert' AND event_time > now() - INTERVAL 1 HOUR
 GROUP BY minute
 ORDER BY minute;

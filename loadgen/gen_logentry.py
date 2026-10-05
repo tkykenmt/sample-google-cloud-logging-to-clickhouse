@@ -98,10 +98,16 @@ def cloud_run(project, now):
     return e
 
 
+GCE_VMS = [(f"vm-batch-{i}", str(7_000_000_000_000_000_000 + i)) for i in range(1, 6)]
+
+
 def gce_text(project, now):
+    name, instance_id = random.choice(GCE_VMS)
     return {
         "resource": {"type": "gce_instance", "labels": {
-            "project_id": project, "instance_id": str(random.randint(10**18, 10**19 - 1)), "zone": "asia-northeast1-b"}},
+            "project_id": project, "instance_id": instance_id, "zone": "asia-northeast1-b"}},
+        # Real GCE agent logs carry the VM name here; MV1 uses it as ServiceName (the ID is the fallback).
+        "labels": {"compute.googleapis.com/resource_name": name},
         "logName": f"projects/{project}/logs/syslog",
         "textPayload": random.choice(["systemd[1]: Started Daily apt download.", "kernel: eth0 link up"] + JA_TEXT),
         "sourceLocation": {"file": "main.go", "line": str(random.randint(1, 900)), "function": "main.run"},
@@ -247,7 +253,7 @@ def main():
         p.error("--out or --publish is required")
     pub = Publisher(args.publish)
     ids_f = open(args.ids_out, "a") if args.ids_out else None
-    sent, start, last = 0, time.time(), None
+    sent, start, last, uncertain = 0, time.time(), None, 0
     while time.time() - start < args.duration and sent < args.max_messages:
         tick = time.time()
         msgs = []
@@ -262,6 +268,9 @@ def main():
                 ids = pub.publish(msgs)
                 break
             except Exception as ex:  # transient HTTP errors: retry the same batch
+                # A timed-out request may still have been published, under IDs we never see: the retry
+                # can then add up to len(msgs) messages to L0/L1 that are not in --ids-out.
+                uncertain += len(msgs)
                 print(f"publish failed ({ex}); retry {attempt + 1}", file=sys.stderr)
                 time.sleep(2 ** attempt)
         else:
@@ -275,6 +284,9 @@ def main():
             time.sleep(wait)
     el = time.time() - start
     print(f"published {sent} messages in {el:.0f}s ({sent / el:.1f} msg/s)", file=sys.stderr)
+    if uncertain:
+        print(f"{uncertain} messages were in failed publish attempts: completeness.sh may report up to that many "
+              "l1_ids_not_in_sent (and InsertId duplicates) that come from the retries, not the pipeline", file=sys.stderr)
 
 
 if __name__ == "__main__":

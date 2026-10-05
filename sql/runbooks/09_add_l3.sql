@@ -17,7 +17,7 @@ ORDER BY (LogId, SeverityText, Minute)
 TTL Minute + INTERVAL {{L3_TTL_DAYS}} DAY;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS gcl.{{L3}}_mv TO gcl.{{L3}}
-DEFINER = default SQL SECURITY DEFINER
+DEFINER = {{MV_DEFINER}} SQL SECURITY DEFINER
 AS
 SELECT toStartOfMinute(Timestamp) AS Minute, LogId, SeverityText, count() AS Cnt
 FROM gcl.gcl_logs_v1

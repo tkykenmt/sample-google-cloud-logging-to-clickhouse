@@ -14,13 +14,15 @@
 SELECT count() AS stuck_rows, min(_publish_time) AS oldest
 FROM gcl.gcl_landing_v1
 WHERE _publish_time BETWEEN now() - INTERVAL 1 DAY AND now() - INTERVAL 2 MINUTE
+  -- Rows dropped on purpose by a noise rule (sql/30 WHERE, sql/50, runbook 07) are not stuck: keep in sync.
+  AND JSONExtractString(_raw_message, 'protoPayload', 'methodName') != 'io.k8s.coordination.v1.leases.update'
   AND _message_id NOT IN (
       SELECT MessageId FROM gcl.gcl_logs_v1
       WHERE PublishTime BETWEEN now() - INTERVAL 1 DAY AND now());
 
--- Failed pipe inserts and their exceptions.
-SELECT event_time, exception_code, substring(exception, 1, 300) AS exception, written_rows
-FROM system.query_log
+-- Failed pipe inserts and their exceptions (query_log is per replica: read every replica).
+SELECT event_time, hostName() AS replica, exception_code, substring(exception, 1, 300) AS exception, written_rows
+FROM clusterAllReplicas('default', system.query_log)
 WHERE user LIKE 'clickpipe:%' AND query_kind = 'Insert' AND type = 'ExceptionWhileProcessing'
   AND event_time > now() - INTERVAL 1 HOUR
 ORDER BY event_time DESC;

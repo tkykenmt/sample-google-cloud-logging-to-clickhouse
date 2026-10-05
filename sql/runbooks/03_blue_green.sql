@@ -7,6 +7,15 @@
 -- Step 1: new table with a permanent versioned name (never RENAME it later).
 --   Copy sql/20_logs_v1.sql, rename to gcl_logs_v2, apply the change (e.g. a new ORDER BY).
 -- Step 2: downstream objects of v2 first (rollup + its MV), then the boundary MV.
+CREATE TABLE IF NOT EXISTS gcl.gcl_logs_1m_v2 AS gcl.gcl_logs_1m_v1;
+CREATE MATERIALIZED VIEW IF NOT EXISTS gcl.gcl_logs_1m_v2_mv TO gcl.gcl_logs_1m_v2
+DEFINER = {{MV_DEFINER}} SQL SECURITY DEFINER
+AS
+SELECT toStartOfMinute(Timestamp) AS Minute, ServiceName, SeverityText, HttpStatus, count() AS Cnt
+FROM gcl.gcl_logs_v2
+GROUP BY Minute, ServiceName, SeverityText, HttpStatus;
+-- Other MVs that read gcl_logs_v1 (L3 from runbook 09) need a v2 copy here as well.
+
 CREATE MATERIALIZED VIEW gcl.gcl_logs_v2_mv TO gcl.gcl_logs_v2
 DEFINER = {{MV_DEFINER}} SQL SECURITY DEFINER
 AS
@@ -18,7 +27,9 @@ SELECT min(PublishTime), max(PublishTime), count() FROM gcl.gcl_logs_v2;
 SELECT max(PublishTime) FROM gcl.gcl_logs_v1;
 SELECT count() FROM gcl.gcl_landing_v1
 WHERE _publish_time < toDateTime64('{{T}}', 3, 'UTC')
-  AND _message_id NOT IN (SELECT MessageId FROM gcl.gcl_logs_v1);   -- must be 0 (runbook 05)
+  AND _message_id NOT IN (SELECT MessageId FROM gcl.gcl_logs_v1)
+  -- Rows dropped on purpose by a noise rule (sql/30 WHERE, sql/50, runbook 07) are not stuck: keep in sync.
+  AND JSONExtractString(_raw_message, 'protoPayload', 'methodName') != 'io.k8s.coordination.v1.leases.update';   -- must be 0 (runbook 05)
 
 -- Step 4: backfill rows before T into a work table, add them to the v2 rollup, then MOVE PARTITION.
 --   Source: L0 when the change needs re-parsing and L0 still holds the range; otherwise gcl_logs_v1.
@@ -31,7 +42,9 @@ FROM
     -- v2 parser body ... reading L0 through a deduplicating subquery:
     -- FROM (SELECT * FROM gcl.gcl_landing_v1
     --       WHERE _publish_time < toDateTime64('{{T}}', 3, 'UTC') LIMIT 1 BY _message_id)
-    -- When the source is gcl_logs_v1 instead, use LIMIT 1 BY MessageId the same way.
+    -- When the source is gcl_logs_v1 instead, deduplicate on MessageId, but keep rows without one
+    -- (rows migrated by runbook 06 have MessageId = ''): use the LogEntry identity for those.
+    --   LIMIT 1 BY if(MessageId != '', MessageId, concat(LogName, '|', InsertId, '|', toString(Timestamp)))
 );
 -- MOVE PARTITION does not fire the v2 rollup MV: aggregate the work table first.
 INSERT INTO gcl.gcl_logs_1m_v2
@@ -46,4 +59,6 @@ DROP TABLE gcl.gcl_logs_v2_bf;
 -- Step 6: switch readers. ClickStack: change the source table. SQL users: stable view name.
 CREATE OR REPLACE VIEW gcl.logs AS SELECT * FROM gcl.gcl_logs_v2;
 -- Step 7: after the rollback window, stop the old MV, then drop the old tables.
--- DROP VIEW gcl.gcl_logs_v1_mv;  DROP TABLE gcl.gcl_logs_1m_v1_mv; ...
+-- DROP VIEW gcl.gcl_logs_v1_mv;  DROP VIEW gcl.gcl_logs_1m_v1_mv;
+-- DROP TABLE gcl.gcl_logs_1m_v1;  DROP TABLE gcl.gcl_logs_v1;
+-- Keep the noise MV (it reads L0, not L1).
