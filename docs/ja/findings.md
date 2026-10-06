@@ -372,6 +372,7 @@ GCP の東京リージョン（`asia-northeast1`）に `clickhousectl cloud serv
 | `verify/checks.sql` | 処理が停滞したバッチ 0、失敗した INSERT 0 |
 | `terraform destroy` | 管理サブスクリプションが消えるのを 24 秒待ってから鍵と権限を削除。何も残らなかった |
 | `tools/chq.py`、`verify/completeness.sh` | リポジトリの最上位で実行し、`clickhousectl` は環境変数の API キーを使った |
+| ハンズオン第 3 部（gcloud と clickhousectl） | 文書のとおりに作成から削除まで通した。サービスアカウントを作った直後の鍵の作成は `NOT_FOUND` で失敗し、10 秒後のやり直しで成功した。`clickhousectl` 0.4.2 で `--enable-ordering` を付けずに作ったパイプでも、管理サブスクリプションの順序付けは有効だった。合成ログ 6,000 件で欠損 0、再配信の重複が L0 と L1 に各 200 件。パイプの削除から管理サブスクリプションが消えるまで 22 秒。gcloud で作ったシンクの書き込み用 ID も、プロジェクトで共有の `service-<プロジェクト番号>@gcp-sa-logging.iam.gserviceaccount.com` だった |
 
 ## 未検証の項目
 

@@ -349,6 +349,7 @@ After the final-review fixes, the Terraform steps of [Setup](setup.md) and part 
 | `verify/checks.sql` | 0 stuck batches, 0 failed inserts |
 | `terraform destroy` | Waited 24 seconds for the managed subscription to go, then removed the key and binding. Nothing was left |
 | `tools/chq.py`, `verify/completeness.sh` | Run from the top of the repository; `clickhousectl` used the API key from the environment |
+| Hands-on part 3 (gcloud and clickhousectl) | Run as written from creation to removal. Key creation right after the service account was created failed with `NOT_FOUND` and succeeded on a retry 10 seconds later. A pipe created with `clickhousectl` 0.4.2 without `--enable-ordering` still had ordering enabled on its managed subscription. 6,000 synthetic messages, no loss, 200 redelivery duplicates in each of L0 and L1. The managed subscription was gone 22 seconds after the pipe was deleted. The writer identity of the gcloud-created sink was also the project-wide `service-<project-number>@gcp-sa-logging.iam.gserviceaccount.com` |
 
 ## Not tested
 

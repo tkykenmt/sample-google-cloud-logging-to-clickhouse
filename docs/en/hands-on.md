@@ -151,6 +151,8 @@ verify/completeness.sh sent_ids.txt
 `missing_in_l1` equals the number of Lease updates, which L1 does not keep.
 To check L1 completeness on its own, publish without `--lease-rate` and confirm `missing_in_l1` is 0.
 Entries resent with `--dup-rate` get a new `MessageId` from Pub/Sub, so they do not count in `dup_ids_*`.
+`dup_ids_*` counts Pub/Sub redeliveries (the same `MessageId` delivered twice).
+Redeliveries happen (0 to 3% in testing); a non-zero value is not data loss.
 
 ### 2-5. Search in ClickStack
 
@@ -276,8 +278,11 @@ gcloud iam roles create $ROLE --project $P --title="ClickPipes Pub/Sub ingestion
 gcloud iam service-accounts create $SA --project $P
 gcloud projects add-iam-policy-binding $P --member="serviceAccount:$SA_EMAIL" \
   --role="projects/$P/roles/$ROLE" --condition=None
-gcloud iam service-accounts keys create $KEY --iam-account=$SA_EMAIL
+until gcloud iam service-accounts keys create $KEY --iam-account=$SA_EMAIL; do sleep 10; done   # right after creation the account can be NOT_FOUND: retry until it propagates
 ```
+
+A new service account can be invisible to key creation for a few seconds (it returned `NOT_FOUND` in testing).
+The last line retries every 10 seconds until it succeeds.
 
 These are the permissions of the official least-privilege role ([Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)).
 ClickPipes creates and deletes its managed subscription (`clickpipes-<pipe id>`) itself, so it needs subscription create and delete.

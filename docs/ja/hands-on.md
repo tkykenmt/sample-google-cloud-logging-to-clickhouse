@@ -159,6 +159,8 @@ verify/completeness.sh sent_ids.txt
 `missing_in_l1` は、L1 に入れない Lease の更新の件数になります。
 Lease の更新を混ぜずに確かめるときは、`--lease-rate` を指定せずに送信し、`missing_in_l1` が 0 になることを確認します。
 `--dup-rate` で同じ内容を再送した分は、Pub/Sub が別の `MessageId` を付けるので、`dup_ids_*` には数えません。
+`dup_ids_*` は、Pub/Sub の再配信（同じ `MessageId` が 2 回届く）の件数です。
+再配信は起きることがあり（検証では 0〜3%）、0 にならなくても欠損ではありません。
 
 ### 2-5. ClickStack で検索する
 
@@ -287,8 +289,11 @@ gcloud iam roles create $ROLE --project $P --title="ClickPipes Pub/Sub ingestion
 gcloud iam service-accounts create $SA --project $P
 gcloud projects add-iam-policy-binding $P --member="serviceAccount:$SA_EMAIL" \
   --role="projects/$P/roles/$ROLE" --condition=None
-gcloud iam service-accounts keys create $KEY --iam-account=$SA_EMAIL
+until gcloud iam service-accounts keys create $KEY --iam-account=$SA_EMAIL; do sleep 10; done   # 作った直後は NOT_FOUND になることがあるので、反映を待ってやり直す
 ```
+
+サービスアカウントは、作った直後は鍵の作成から見えないことがあります（検証では `NOT_FOUND` になりました）。
+最後の行は、成功するまで 10 秒おきにやり直します。
 
 権限は公式の最小権限ロールと同じです（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）。
 ClickPipes は管理サブスクリプション（`clickpipes-<パイプ ID>`）を自分で作って消すので、サブスクリプションの作成と削除の権限が要ります。
