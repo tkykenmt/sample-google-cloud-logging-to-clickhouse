@@ -220,7 +220,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--out")
     p.add_argument("--publish", help="projects/<project>/topics/<topic>")
-    p.add_argument("--count", type=int, default=1000, help="entries for --out, or per-run cap for --publish")
+    p.add_argument("--count", type=int, default=1000, help="entries for --out (with --publish, use --duration and --max-messages)")
     p.add_argument("--rate", type=float, default=50, help="messages/sec for --publish")
     p.add_argument("--duration", type=float, default=60, help="seconds for --publish")
     p.add_argument("--batch", type=int, default=200)

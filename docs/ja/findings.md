@@ -2,7 +2,7 @@
 
 [English](../en/findings.md) | 日本語
 
-2026-10-01〜02 に ClickHouse Cloud と Google Cloud の検証環境で確かめた結果です。
+2026-10-01〜05 に ClickHouse Cloud と Google Cloud の検証環境で確かめた結果です。
 Pub/Sub ClickPipes は Private Preview の段階にあり、ClickHouse Cloud も自動でバージョンが更新されるため、ここに記載した挙動は将来変わる可能性があります。
 
 ## 環境
@@ -47,7 +47,7 @@ MV の SQL SECURITY と、パイプのユーザーに必要な権限を、INSERT
 SQL SECURITY を書かない MV で権限が足りなかったとき、読み取り元のテーブルには行が書かれ、MV の先には書かれませんでした。
 
 `clickhousectl` で作ったパイプのユーザーには `default_role` が付いていて、権限不足は起きません。
-UI の「Only destination table」を選ぶ場合は、MV を DEFINER 付きで作ります。
+UI の「Only destination」を選ぶ場合は、MV を DEFINER 付きで作ります。
 
 ## MV が例外を出したとき
 
@@ -152,7 +152,7 @@ p99 の約 5 秒は、パイプが約 5 秒ごとに INSERT することによ�
 | 本体 | 54 バイト（監査ログ専用、ORDER BY (serviceName, principalEmail, timestamp)） | 86 バイト（テキストインデックス約 13% を含む） |
 
 本体が大きくなった主な要因は、k8s.io の監査ログがイベントごとに一意な UUID を持つ `OperationId`（列の 22%）と、`ProtoPayload` の原文（25%）、属性のテキストインデックスです。
-長期保存の容量を減らすには、Lease 更新のような不要なログをシンクのフィルタで除外するのが最も効果的です。
+Lease 更新のような不要なログをシンクのフィルタで除外すると、長期保存の容量が大きく減ります。
 
 ## 日本語の全文検索
 
@@ -168,8 +168,12 @@ ClickStack は検索窓の語を `hasAllTokens(lower(Body), lower('語'))` に�
 - 単語単位の区切りでは、日本語の文がまるごと 1 つの語になり、日本語の検索はエラーにならずに 0 件になった。
 - 1 つの式に付けられるテキストインデックスは 1 つまでだった。
 - ngrams(2) では、1 文字だけの検索語は日本語でも英語でも 0 件になった。
-- ClickStack は、検索の経路によって `hasToken(lower(Body), lower('語'))` を出すこともあった（MCP からの検索）。ngrams(2) のインデックスは、Cloud 26.6 では `hasToken` でも使われ（333 グラニュール中 11）、clickhouse local 26.7 では `hasAllTokens` でしか使われなかった。使う版で両方の形を EXPLAIN で確かめる。
-- `hasAllTokens` は WHERE に書いたときだけインデックスの区切り方で評価された。SELECT 句の `countIf(hasAllTokens(...))` では日本語が 0 件になった（26.7.7 の clickhouse local、WHERE では LIKE と同じ 1,736 件）。件数の比較は WHERE で数える。
+- ClickStack は、検索の経路によって `hasToken(lower(Body), lower('語'))` を出すこともあった（MCP からの検索）。
+  ngrams(2) のインデックスは、Cloud 26.6 では `hasToken` でも使われ（333 グラニュール中 11）、clickhouse local 26.7 では `hasAllTokens` でしか使われなかった。
+  使う版で両方の形を EXPLAIN で確かめる。
+- `hasAllTokens` は WHERE に書いたときだけインデックスの区切り方で評価された。
+  SELECT 句の `countIf(hasAllTokens(...))` では日本語が 0 件になった（26.7.7 の clickhouse local、WHERE では LIKE と同じ 1,736 件）。
+  件数の比較は WHERE で数える。
 
 ## シンクの送出件数との突き合わせ
 
@@ -187,21 +191,28 @@ Cloud Monitoring の `logging.googleapis.com/exports/log_entry_count`（シン�
 | Pub/Sub の公開 | 368.2 MB | `pubsub.googleapis.com/topic/byte_cost` |
 | Pub/Sub の配信 | 376.9 MB | `pubsub.googleapis.com/subscription/byte_cost`（streaming_pull） |
 
-- Pub/Sub に送った量は Cloud Logging の課金対象の約 5 倍だった。74% は Cloud Logging が課金しない `_Required` 行きの Admin Activity 監査ログで、59% は Kubernetes の Lease 更新だった。
+- Pub/Sub に送った量は Cloud Logging の課金対象の約 5 倍だった。
+  74% は Cloud Logging が課金しない `_Required` 行きの Admin Activity 監査ログで、59% は Kubernetes の Lease 更新だった。
 - 料金に換算すると、Pub/Sub（公開と配信）は Cloud Logging の取り込み料の約 78% にあたった。
 - Cloud Logging が課金するログだけでは、Pub/Sub に送った JSON は課金対象の量の約 1.2 倍で、Pub/Sub の料金は取り込み料の約 2 割になる。
-- 配信側では ack（55.3 MB）と ack 期限の延長（179.8 MB）も byte_cost に計上された。これが課金されるかは確かめていない。
-- Lease 更新だけを 1 日分（2026-10-04、GKE クラスタ 2 つ）で数えると、210 万件、メッセージ本文の合計で 2.71 GiB だった。公開と配信の料金に換算すると月に約 $6.4、クラスタ 1 つあたり約 $3 になる（無料枠と 1 KB の最低課金を考えない概算）。集計された件数（`gcl_noise_1m_v1`）と L0 の同じ条件の行の数は、どちらも 2,103,762 件で一致し、L1 には 0 件だった。
-- 停止したパイプの管理サブスクリプションには、停止から 19 時間で 170 万件、2.3 GB が蓄積していた。公開から 1 日を超えた分には保管料がかかる。
+- 配信側では ack（55.3 MB）と ack 期限の延長（179.8 MB）も byte_cost に計上された。
+  これが課金されるかは確かめていない。
+- Lease 更新だけを 1 日分（2026-10-04、GKE クラスタ 2 つ）で数えると、210 万件、メッセージ本文の合計で 2.71 GiB だった。
+  公開と配信の料金に換算すると月に約 $6.4、クラスタ 1 つあたり約 $3 になる（無料枠と 1 KB の最低課金を考えない概算）。
+  集計された件数（`gcl_noise_1m_v1`）と L0 の同じ条件の行の数は、どちらも 2,103,762 件で一致し、L1 には 0 件だった。
+- 停止したパイプの管理サブスクリプションには、停止から 19 時間で 170 万件、2.3 GB が蓄積していた。
+  公開から 1 日を超えた分には保管料がかかる。
 
 ## 属性の Map とインデックス（ClickStack の既定スキーマとの突き合わせ）
 
 属性の型は、ClickStack の公式の推奨どおり Map にしています（JSON 型は ClickStack ではベータで、キーが少なく安定している場合向け）。
 
 **属性で絞り込むときの SQL とインデックス**（Cloud 26.6、40 万行）
-- テーブルに `LogAttributeItems`（`キー=値` の配列の ALIAS 列）があると、ClickStack は属性の絞り込みを `has(LogAttributeItems, 'キー=値')` に変換した。この列の text インデックスが使われ、読んだのは 8,192 行だった。
-- この列がないテーブルでは、ClickStack は `LogAttributes['キー'] = '値' AND indexHint(mapContains(...))` に変換した。この形では `キー=値` のインデックスは使われず、`mapValues` のインデックスは使われた（clickhouse local 26.7）。
-- そのため L1 には、既定スキーマと同じ `ResourceAttributeItems`／`LogAttributeItems` とそのインデックスを置く。
+- テーブルに `LogAttributeItems`（`キー=値` の配列の ALIAS 列）があると、ClickStack は属性の絞り込みを `has(LogAttributeItems, 'キー=値')` に変換した。
+  この列の text インデックスが使われ、読んだのは 8,192 行だった。
+- この列がないテーブルでは、ClickStack は `LogAttributes['キー'] = '値' AND indexHint(mapContains(...))` に変換した。
+  この形では `キー=値` のインデックスは使われず、`mapValues` のインデックスは使われた（clickhouse local 26.7）。
+- そのため L1 には、既定スキーマと同じ `ResourceAttributeItems` と `LogAttributeItems` とそのインデックスを置く。
 
 **Map の保存形式（`with_buckets`）**（Cloud 26.6、実ログ 1 日分 120 万行、属性のキーは 1 行あたり平均 2〜12 個・最大 22 個、3 回の中央値）
 
@@ -216,16 +227,20 @@ Cloud Monitoring の `logging.googleapis.com/exports/log_entry_count`（シン�
 
 - 既定の設定（`map_buckets_min_avg_size = 32`）では、平均のキー数が 32 個未満なので分割されず、保存の構造は従来の形式と同じだった。
 - 強制的に分割すると（下限を 0）、1 つのキーを読むクエリは 2〜3 割速くなったが、Map 全体を読むクエリは 2.4 倍遅く、保存量は 1 割、INSERT は 3 割弱増えた。
-- L1 では `with_buckets` を、INSERT 直後の部分は従来の形式のままにして指定する。キーが増えて平均が 32 個を超えた部分だけが、マージ時に自動で分割される。
+- L1 では `with_buckets` を、INSERT 直後のパートは従来の形式のままにして指定する。
+  キーが増えて平均が 32 個を超えたパートだけが、マージ時に自動で分割される。
 
 ## 継続運用中の L1 の移行（Blue/Green、2026-10-02）
 
-旧スキーマ（属性の値のインデックス、本文は単語単位の区切り）の L1 を、新しいスキーマ（`キー=値` のインデックス、本文は ngrams(2)、Map は with_buckets）の `gcl_logs_v2` へ、`sql/runbooks/03_blue_green.sql` の手順（[運用](operations.md) の付録 A3）で移した。
+旧スキーマ（属性の値のインデックス、本文は単語単位の区切り）の L1 を、新しいスキーマ（`キー=値` のインデックス、本文は ngrams(2)、Map は with_buckets）の `gcl_logs_v2` へ、`sql/runbooks/03_blue_green.sql` の手順（[運用](operations.md) の付録 A3）で移しました。
 
-- 境界時刻 T の 5 分前に、T 以降に公開されたデータだけを書き込む MV を作った。v2 の最初の行の公開時刻は T の 0.348 秒後で、T 以降の MessageId の数は v1 と一致した（1,813 件）。
-- T より前のデータは、v1 から 6 時間ごとの区間に分けてコピーし、区間ごとに件数の一致を確認した（合計 18,921,930 行）。件数確認が 1 回失敗して処理が停止したが、コピー前の確認だったため、その区間をスキップして再開できた。
+- 境界時刻 T の 5 分前に、T 以降に公開されたデータだけを書き込む MV を作った。
+  v2 の最初の行の公開時刻は T の 0.348 秒後で、T 以降の MessageId の数は v1 と一致した（1,813 件）。
+- T より前のデータは、v1 から 6 時間ごとの区間に分けてコピーし、区間ごとに件数の一致を確認した（合計 18,921,930 行）。
+  件数確認が 1 回失敗して処理が停止したが、コピー前の確認だったため、その区間をスキップして再開できた。
 - 日ごとの件数、MessageId の重複数（641）、分単位の集計の合計は、v1 と v2 で一致した。
-- ClickStack のソースと、名前を固定したビューを v2 に切り替えた。属性の絞り込み条件には `has(LogAttributeItems, ...)` が使われ、まれな値では 333 グラニュール中 1 まで絞れた。
+- ClickStack のソースと、名前を固定したビューを v2 に切り替えた。
+  属性の絞り込み条件には `has(LogAttributeItems, ...)` が使われ、まれな値では 333 グラニュール中 1 まで絞れた。
 
 ## パーサ v7：共通項目は列に、個別の内容は属性に
 
@@ -244,10 +259,12 @@ v7 では特定のログ形式を前提にせず、列として定義しない�
 | ペイロードなし | リソースの種類/ログ ID | `[ログ ID]` | なし |
 | 監査ログ | API のサービス名 | `サービス名 メソッド名` | `audit.*`、`proto.type` |
 
-v6 では、監査ログ以外の protoPayload は ServiceName が空、Body が空白 1 文字になっていた。
+v6 では、監査ログ以外の protoPayload は ServiceName が空、Body が空白 1 文字になっていました。
 
-- 合成ログ 30 万行では、ServiceName・Body・既存の属性は v6 と同じで、属性の数が 16% 増えた。INSERT の CPU 時間は 1.53 秒から 1.78 秒（16% 増）。
-- 継続運用中の MV に `MODIFY QUERY` で適用した後、失敗した INSERT と処理の停滞は 0 件だった。実ログでは、GKE の操作ログの `operation.first`・`operation.last` が新たに残るようになった（v6 では保存していなかった）。
+- 合成ログ 30 万行では、ServiceName、Body、既存の属性は v6 と同じで、属性の数が 16% 増えた。
+  INSERT の CPU 時間は 1.53 秒から 1.78 秒（16% 増）。
+- 継続運用中の MV に `MODIFY QUERY` で適用した後、失敗した INSERT と処理の停滞は 0 件だった。
+  実ログでは、GKE の操作ログの `operation.first` と `operation.last` が新たに残るようになった（v6 では保存していなかった）。
 
 ## L1 での取り出しと型付きテーブル（L2）の比較
 
@@ -260,14 +277,15 @@ GKE のアップグレード通知の表（ノードプール、版、件数、�
 | L1（ServiceName で絞る、1 日分） | ― | 159 ms | 110 万行 |
 
 - L1 の並び順の先頭は 5 分ごとの時刻なので、ServiceName で絞っても読み取り量はほとんど減らず、対象期間で決まる。
-- 読み取り量は対象期間の行数に比例する。1 日分（110 万行）なら 159 ms、9 日分（1,894 万行）でも 623 ms で、この規模なら L1 だけでダッシュボードは十分に動く。
+- 読み取り量は対象期間の行数に比例する。
+  1 日分（110 万行）なら 159 ms、9 日分（1,894 万行）でも 623 ms で、この規模なら L1 だけでダッシュボードは十分に動く。
 
 ## テキストインデックス
 
 `hasToken(lower(Body), 'timeout')` で `idx_lower_body` が使われました。
 名前を固定したビュー（`gcl.logs`）経由でも、同じ実行計画でした。
 
-## 構築手順（Terraform と cli/deploy.sh、2026-10-02）
+## 構築手順（Terraform、gcloud と clickhousectl、2026-10-02）
 
 検証用のプロジェクトとサービスを使い、両方の手順でリソースの作成から削除までを実行しました。
 `cli/deploy.sh` と `cli/destroy.sh` はその後リポジトリから外し、同じコマンドを [ハンズオン](hands-on.md) の第 3 部に移しました。
@@ -296,7 +314,8 @@ GCP の東京リージョン（`asia-northeast1`）に `clickhousectl cloud serv
 | `terraform destroy`（待ち合わせあり） | パイプの削除後 23 秒で管理サブスクリプションが消えたのを確かめてから、鍵と権限を削除した。何も残らなかった |
 
 - `tools/chq.py` を新しいサービスに初めて実行したとき、`clickhousectl` が Query API のエンドポイントとキーを作った。
-- 同じプロジェクトには、この検証より前の日付の、`_deleted-topic_` を指した管理サブスクリプションが 2 つ残っていた。2026-10-02 の削除の確認では、この残り方を見落とした可能性がある。
+- 同じプロジェクトには、この検証より前の日付の、`_deleted-topic_` を指した管理サブスクリプションが 2 つ残っていた。
+  2026-10-02 の削除の確認では、この残り方を見落とした可能性がある。
 
 ## ブラウザでの構築（2026-10-05）
 
@@ -332,11 +351,31 @@ GCP の東京リージョン（`asia-northeast1`）に `clickhousectl cloud serv
 
 境目の突き合わせと、L0 の TTL を過ぎた行の扱いは、clickhouse local 26.7 で確かめました。
 
-- 3,000 件の合成ログで、受信時刻の真ん中を境目にし、境目より後をパイプが入れた形で入れてから、残りを runbook の Step 3 と Step 4 で入れた。L1 2,364 件とノイズの件数 636 件の合計が 3,000 件で、LogEntry の重複は 0。Step 4 で L0 と突き合わせないと、L1 に 319 件の重複が出て、ノイズの件数が 81 件増えた。
-- L0 と同じ設定（TTL 7 日、`ttl_only_drop_parts = 1`）のテーブルに 20 日前の時刻の行を 10 行入れると、直後は 10 行、3 秒後は 0 行だった。バックグラウンドのマージを止めると残った。MV は INSERT の時点で動くので、L1 には入った。
+- 3,000 件の合成ログで、受信時刻の真ん中を境目にし、境目より後をパイプが入れた形で入れてから、残りを runbook の Step 3 と Step 4 で入れた。
+  L1 2,364 件とノイズの件数 636 件の合計が 3,000 件で、LogEntry の重複は 0。
+  Step 4 で L0 と突き合わせないと、L1 に 319 件の重複が出て、ノイズの件数が 81 件増えた。
+- L0 と同じ設定（TTL 7 日、`ttl_only_drop_parts = 1`）のテーブルに 20 日前の時刻の行を 10 行入れると、直後は 10 行、3 秒後は 0 行だった。
+  バックグラウンドのマージを止めると残った。
+  MV は INSERT の時点で動くので、L1 には入った。
 - Cloud 26.6 で同じ形のテーブルと MV を作って試すと、`system.part_log` で INSERT のパート（10 行）の 0.1 秒後に `TTLDropMerge` が記録され、MV の宛先には 10 行が入った。
+
+## 最終確認（2026-10-06）
+
+最終レビューの修正の後、[導入](setup.md) の Terraform の手順とハンズオン第 2 部を、東京リージョンのサービスと `topic_storage_regions = ["asia-northeast1"]` で通しました。
+
+| 手順 | 結果 |
+|---|---|
+| `terraform apply` | 約 69 秒、10 リソース、パイプは Running |
+| 合成ログ 3,000 件（Lease 更新 2 割、内容の重複 1%） | L0 で欠損 0。L0 3,050 件 = L1 2,428 件 + ノイズの件数 622 件、L3 の合計 = L1。`MessageId` の重複（Pub/Sub の再配信）が L0 に 50 件、L1 に 45 件あった |
+| L2 の追加（T を待つ処理つき） | T の 3 秒後に待ちを抜けた。`MessageId` の種類の数は L2 と L1 の監査ログでどちらも 668。行数は L1 が 6 件多く、再配信の重複だった |
+| L3 の追加 | L3 の合計と L1 の行数はどちらも 8,405 |
+| `verify/checks.sql` | 処理が停滞したバッチ 0、失敗した INSERT 0 |
+| `terraform destroy` | 管理サブスクリプションが消えるのを 24 秒待ってから鍵と権限を削除。何も残らなかった |
+| `tools/chq.py`、`verify/completeness.sh` | リポジトリの最上位で実行し、`clickhousectl` は環境変数の API キーを使った |
+| ハンズオン第 3 部（gcloud と clickhousectl） | 文書のとおりに作成から削除まで通した。サービスアカウントを作った直後の鍵の作成は `NOT_FOUND` で失敗し、10 秒後のやり直しで成功した。`clickhousectl` 0.4.2 で `--enable-ordering` を付けずに作ったパイプでも、管理サブスクリプションの順序付けは有効だった。合成ログ 6,000 件で欠損 0、再配信の重複が L0 と L1 に各 200 件。パイプの削除から管理サブスクリプションが消えるまで 22 秒。gcloud で作ったシンクの書き込み用 ID も、プロジェクトで共有の `service-<プロジェクト番号>@gcp-sa-logging.iam.gserviceaccount.com` だった |
 
 ## 未検証の項目
 
 - 数十 MB/s 級の流量でのパイプの必要なレプリカ数
-- GKE 以外の発生源（Cloud Run のリクエストログなど）の実ログ。合成ログで代用した
+- GKE 以外の発生源（Cloud Run のリクエストログなど）の実ログ。
+  合成ログで代用した

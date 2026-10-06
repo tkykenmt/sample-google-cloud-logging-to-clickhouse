@@ -47,7 +47,8 @@ WHERE (/* the current WHERE */) AND _publish_time < toDateTime64('{{T2}}', 3, 'U
 SELECT max(_publish_time) FROM gcl.gcl_landing_v1;
 SELECT count() FROM gcl.gcl_landing_v1
 WHERE _publish_time < toDateTime64('{{T2}}', 3, 'UTC')
-  AND _message_id NOT IN (SELECT MessageId FROM gcl.{{L1}})
+  AND _publish_time >= toDateTime64('{{T2}}', 3, 'UTC') - INTERVAL 1 DAY
+  AND _message_id NOT IN (SELECT MessageId FROM gcl.{{L1}} WHERE PublishTime >= toDateTime64('{{T2}}', 3, 'UTC') - INTERVAL 1 DAY)
   -- Rows dropped on purpose by a noise rule are not stuck: same condition as verify/checks.sql 2.
   AND JSONExtractString(_raw_message, 'protoPayload', 'methodName') != 'io.k8s.coordination.v1.leases.update';   -- must be 0
 -- Point verify/checks.sql and the runbooks at gcl_landing_v2 from now on.

@@ -30,7 +30,7 @@ variable "gcp_project_id" {
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.gcp_project_id))
-    error_message = "gcp_project_id must be a project ID (6-30 lowercase letters, digits or hyphens), not a project name or number."
+    error_message = "gcp_project_id must be a project ID (6-30 lowercase letters, digits or hyphens), not a project name or number. Domain-scoped IDs (example.com:my-project) are not accepted by the ClickPipe."
   }
 }
 
@@ -175,8 +175,8 @@ variable "pipe_seek_timestamp" {
   default     = null
 
   validation {
-    condition     = (var.pipe_seek_type == "timestamp") == (var.pipe_seek_timestamp != null)
-    error_message = "Set pipe_seek_timestamp exactly when pipe_seek_type is \"timestamp\"."
+    condition     = (var.pipe_seek_type == "timestamp") == (var.pipe_seek_timestamp != null) && (var.pipe_seek_timestamp == null || can(regex("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$", var.pipe_seek_timestamp)))
+    error_message = "Set pipe_seek_timestamp, in RFC 3339 (e.g. 2026-10-05T00:00:00Z), exactly when pipe_seek_type is \"timestamp\"."
   }
 }
 

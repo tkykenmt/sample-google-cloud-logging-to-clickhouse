@@ -7,7 +7,10 @@
 
 -- Step 1: choose T = now + 5..10 min (UTC) and write the condition so that it matches only the noise
 --   (test it on L0 first: SELECT count() FROM gcl.gcl_landing_v1 WHERE ({{COND}}) AND _publish_time > now() - INTERVAL 1 HOUR).
---   Add the same condition to the stuck-row checks (verify/checks.sql 2, runbook 05) after T.
+--   After T, add the same condition everywhere noise is excluded from a "must be 0" check:
+--   verify/checks.sql 2, runbooks 03 (Step 3), 04 (Step 4), 05, 06 (Step 4) and verify/local_e2e.sh check 10.
+--   Rows matching both COND and the Lease rule are counted as k8s-lease-update (multiIf order), so leave
+--   Lease updates out of COND, or the Step 4 comparison below will not match.
 
 -- Step 2: start counting the new rule from T (the existing rule keeps counting).
 ALTER TABLE gcl.gcl_noise_1m_v1_mv MODIFY QUERY

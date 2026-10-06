@@ -7,7 +7,6 @@ L1 fixes only the envelope as columns and takes the payload as attributes, so ne
 Rebuilding and switching L0 and L1 is for recovery or redesign only, so those procedures are in the appendix.
 
 SQL templates for each procedure are in `sql/runbooks/`.
-This page covers the preconditions of each procedure and the caveats observed on real services.
 Numbers and conditions are in the [findings](findings.md).
 
 ## Daily checks
@@ -46,7 +45,7 @@ python3 tools/chq.py verify/checks.sql
 
 Many procedures use a boundary time T.
 T is a `_publish_time` (Pub/Sub publish time) a few minutes after the work starts.
-Old and new MVs split the rows before and from T, so nothing is missed or ingested twice.
+Old and new MVs split the rows before and from T, so nothing is missed or ingested twice at the boundary.
 
 ## What "no downtime" means
 
@@ -58,7 +57,7 @@ Reads, ingestion, and completeness are treated separately.
 | Ingest continuity | The ClickPipe is never stopped | Adding a column, fixing the parser, Blue/Green, and swapping the pipe all completed without stopping the pipe |
 | Completeness | No received message is lost or counted twice | All published message IDs reconciled with L1: zero missing, zero `MessageId` duplicates |
 
-Completeness can only be checked for data still within the retention of L0 and the Pub/Sub topic.
+Completeness can only be checked for data still within the L0 retention (and the 7 days kept by the managed subscription).
 Data past retention can be neither rebuilt nor reconciled.
 
 ## Noise rules and normalization for every log
@@ -91,8 +90,8 @@ An L2 is optional. Build one only when one of the signals below applies. Otherwi
 
 | Signal for an L2 | Try first |
 |---|---|
-| A screen used daily exceeds its target response time (e.g. a few seconds) on L1 (L1 reads all rows in the time range) | Narrow the time range. Use an L3 aggregate |
-| You often filter on a column (an audit log operator, a node pool) and the L1 sort key cannot skip data for it | Move the value into a column in the L1 sort key (such as `ServiceName`) |
+| A screen used daily exceeds its target response time (e.g. a few seconds) on L1 (the rows L1 reads are set by the time range) | Narrow the time range. Use an L3 aggregate |
+| You often filter on a column (an audit log operator, a node pool) and the L1 sort key cannot skip data for it | Consider whether the value can be expressed through a column already in the L1 sort key (such as `ServiceName`) |
 | Time or number calculations are heavy or error-prone to write in every query, or are used in alert conditions | Write the expression once in a dashboard tile |
 | You need separate retention, access, or deletion rules per log kind | None (an L2 separates them) |
 | You need deduplicated results or only the latest state | Use `LIMIT 1 BY` at query time |

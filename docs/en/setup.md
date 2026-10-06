@@ -3,7 +3,7 @@
 English | [日本語](../ja/setup.md)
 
 Terraform creates the Google Cloud resources, the ClickHouse tables and MVs, the ClickPipe, and the ClickStack source and dashboard.
-With Terraform, the "Steps" on this page are the only deployment procedure.
+With Terraform, run only the "Steps" section of this page.
 Without Terraform, build the same configuration in the consoles with [Setup in the browser](setup-console.md) (run one or the other, not both).
 To build the same pieces one at a time with gcloud and clickhousectl and see what each does, follow part 3 of the [Hands-on](hands-on.md).
 The reasoning is in [Design](design.md).
@@ -11,7 +11,7 @@ The reasoning is in [Design](design.md).
 ## Before you start
 
 - **Try it in a test project first.** From the moment `terraform apply` runs, the sink sends every log of the project to the topic.
-- **Pub/Sub is billed.** In the test environment, the volume sent to Pub/Sub was about 5 times the Cloud Logging billable volume ([Findings](findings.md), "Bytes that drive Pub/Sub cost"). High-volume noise can be excluded at the sink with `sink_exclusions`.
+- **Pub/Sub is billed.** In the test environment, the volume sent to Pub/Sub was about 5 times the Cloud Logging billable volume ([Findings](findings.md), "Bytes that drive Pub/Sub cost"). Most of the difference was audit logs routed to `_Required`, which Cloud Logging does not bill (for billable logs alone it was about 1.2 times). High-volume noise can be excluded at the sink with `sink_exclusions`.
 - **The service account key is stored in the Terraform state.** Keep the state in an encrypted remote backend with restricted access (`terraform/terraform.tf` has an example).
 - **The ClickPipes permissions cover the whole project.** The official least-privilege role ([Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)) allows creating, consuming and deleting subscriptions anywhere in the project. If that is too broad, put the topic in a project dedicated to log export.
 - **Storage in the existing `_Default` bucket does not change.** Stopping it is not part of the setup; see "Switching production logs" in [Operations](operations.md).
@@ -35,9 +35,10 @@ For the same reason, changing a TTL or similar value after creation does not rea
 
 ## Prerequisites
 
-- A ClickHouse Cloud service (26.6 or later) in the same region where the topic stores messages.
+- A ClickHouse Cloud service (26.6 or later). Restrict the topic's message storage to the same region with `topic_storage_regions` (step 2).
 - A ClickHouse Cloud API key with write access, and the organization ID.
 - Permissions in the Google Cloud project to create topics, sinks, service accounts, custom roles, and IAM bindings.
+- The Pub/Sub, Cloud Logging and IAM APIs enabled in the project (step 1).
 - Terraform 1.9 or later, `gcloud`, `python3`, and `clickhousectl` on your machine.
 - The first `tools/chq.py` run makes `clickhousectl` create a Query API endpoint and key on the service (it prints `Provisioning Query API endpoint + key`).
 - If an organization policy (`iam.disableServiceAccountKeyCreation`) blocks service account key creation, a key file created through your approved process (`service_account_key_file`).
@@ -50,11 +51,18 @@ For the same reason, changing a TTL or similar value after creation does not rea
 # Credentials for the Terraform google provider (Application Default Credentials)
 gcloud auth application-default login
 
-# The Terraform ClickHouse provider and clickhousectl (called by tools/chq.py) read the same variables
+# Enable the APIs in use (no-op if already enabled)
+gcloud services enable pubsub.googleapis.com logging.googleapis.com iam.googleapis.com --project <project>
+
+# The Terraform ClickHouse provider reads all three; clickhousectl (called by tools/chq.py) reads the API key pair
 export CLICKHOUSE_ORG_ID=<organization id>
 export CLICKHOUSE_CLOUD_API_KEY=<key id>
 export CLICKHOUSE_CLOUD_API_SECRET=<key secret>
+clickhousectl cloud service get <service id>   # seeing the service means the key works
 ```
+
+If the current directory has `.clickhouse/credentials.json` (saved by `clickhousectl cloud auth login`), `clickhousectl` uses it before the environment variables.
+Run `tools/chq.py` from the top of the repository and keep credentials for other organizations out of it.
 
 ### 2. Set the variables
 
@@ -63,7 +71,7 @@ cd terraform
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Open `terraform.tfvars` and replace `gcp_project_id` and `clickhouse_service_id`.
+Open `terraform.tfvars`, replace `gcp_project_id` and `clickhouse_service_id`, and uncomment `topic_storage_regions` with the service's region.
 Everything else works with the defaults.
 The main variables are below.
 All variables and defaults are in `terraform/variables.tf`, and invalid values are rejected at `terraform plan`.
@@ -74,7 +82,7 @@ All variables and defaults are in `terraform/variables.tf`, and invalid values a
 | `clickhouse_service_id` | ― | ID of the destination service |
 | `sink_filter` | Every log of the project | Leave as is; narrow by log kind on the ClickHouse side |
 | `sink_exclusions` | None | To drop high-volume noise you never search in ClickHouse at the sink |
-| `topic_storage_regions` | Unrestricted | To pin message storage to the ClickHouse Cloud region |
+| `topic_storage_regions` | Unrestricted | Set it to the region of the ClickHouse Cloud service (e.g. `["asia-northeast1"]`); crossing regions adds delivery egress charges |
 | `topic_kms_key_name` | None (Google-managed key) | To encrypt the topic with a customer-managed key (CMEK) |
 | `landing_ttl_days` | 7 | Ingest delay + switch and backfill + verification and rollback, plus a margin |
 | `logs_ttl_days` | 400 | Log retention requirement |
@@ -90,7 +98,7 @@ terraform plan
 ```
 
 Check the resources to be created and the sink `filter` in the plan output.
-Without ClickStack, 10 resources are created (including `terraform_data.subscription_cleanup`, which waits during destroy).
+Without ClickStack, 10 resources are created (including `terraform_data.subscription_cleanup`, which waits during destroy; 9 with `service_account_key_file`).
 
 ```bash
 terraform apply
@@ -140,11 +148,12 @@ The periodic checks are in "Daily checks" in [Operations](operations.md).
 cd terraform
 terraform destroy
 cd ..
+export CH_SERVICE_ID=<service id>
 python3 tools/chq.py -q "DROP DATABASE IF EXISTS gcl SYNC"
 ```
 
 - `terraform destroy` removes only what Terraform created.
 - Delete the pipe before the database. In the other order, the pipe's inserts keep failing until it is deleted.
-- When the ClickPipe is deleted, ClickPipes deletes its managed subscription asynchronously. `terraform destroy` waits for that (`tools/wait_subscriptions_gone.py`, up to 5 minutes) before removing the key and the role binding. Without the wait, the managed subscription was left behind, attached to the deleted topic (`_deleted-topic_`).
+- When the ClickPipe is deleted, ClickPipes deletes its managed subscription asynchronously. `terraform destroy` waits for that (`tools/wait_subscriptions_gone.py`, up to 5 minutes) before removing the key and the role binding. Without the wait, the managed subscription was left behind, attached to the deleted topic (`_deleted-topic_`). If it is still there after 5 minutes, destroy warns and continues; run the printed `gcloud pubsub subscriptions delete` command to remove it.
 - The database `gcl` created by `sql/` is not managed by Terraform; remove it with `DROP DATABASE`.
 - A deleted custom role stays soft-deleted and can be restored within 7 days. Its ID cannot be reused until it is permanently deleted ([Deleting a custom role](https://cloud.google.com/iam/docs/creating-custom-roles#deleting-custom-role)). To try again right away, change `clickpipes_role_id`.

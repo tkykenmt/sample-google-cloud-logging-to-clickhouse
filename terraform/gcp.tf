@@ -81,6 +81,9 @@ resource "google_service_account_key" "clickpipes" {
 # go; otherwise the subscription is left behind, attached to the deleted topic (seen in testing).
 # The pipe depends on this resource, so it is destroyed first.
 resource "terraform_data" "subscription_cleanup" {
+  # Replaced (so the destroy-time wait runs for the old topic) when the project or topic changes.
+  triggers_replace = [var.gcp_project_id, var.topic_name]
+
   input = {
     project = var.gcp_project_id
     topic   = google_pubsub_topic.logs.name

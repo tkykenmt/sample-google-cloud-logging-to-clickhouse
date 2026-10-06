@@ -1,7 +1,7 @@
 -- MV1: L0 -> L1. The LogEntry is parsed once into a named Tuple instead of calling JSONExtract
 -- per field (2.7x less CPU on real audit-heavy logs, 3.7x on synthetic mixed logs).
 -- Only non-throwing functions are used: an exception here blocks the batch (see runbooks/05).
--- SQL SECURITY DEFINER lets the ClickPipe run with "Only destination table" (INSERT on L0 only).
+-- SQL SECURITY DEFINER lets the ClickPipe run with "Only destination" (INSERT on L0 only).
 -- Parser v7: the LogEntry envelope is fixed (columns), the payload is open (attributes). Nothing assumes a
 -- specific log type: audit fields are added only for AuditLog payloads, envelope fields without a column go to
 -- entry.* / http.* / operation.* attributes, and ServiceName / Body always fall back to something non-empty.

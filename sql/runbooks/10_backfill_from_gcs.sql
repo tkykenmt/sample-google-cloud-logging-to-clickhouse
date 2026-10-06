@@ -26,8 +26,11 @@
 -- entries, no duplicate LogEntry identity. Without the L0 check on the boundary chunk, 319 rows were
 -- duplicated in L1 and the noise counts grew by 81.
 
--- Step 1: where the live pipeline starts.
-SELECT min(_publish_time) AS t0 FROM gcl.gcl_landing_v1 WHERE _message_id != '';
+-- Step 1: where the live pipeline starts. Read it from L1: L0 keeps only the last 7 days.
+SELECT min(PublishTime) AS t0 FROM gcl.gcl_logs_v1 WHERE MessageId != '';
+--   Step 4 checks the boundary against L0, which works while T0 is within the L0 TTL. Later than that,
+--   check it against L1 instead (LogName, InsertId, Timestamp); noise rows of those 20 minutes may then be
+--   counted twice in gcl_noise_1m_v1.
 
 -- Step 2: check the copied files before inserting (format, count, receive range).
 SELECT count(), min(rt), max(rt), countIf(NOT isValidJSON(line)) AS not_json
@@ -75,5 +78,9 @@ WHERE id NOT IN
 
 -- Step 5: reconcile. Copied entries = backfilled L1 rows + backfilled noise counts, per receive hour.
 --   (Compare with logEntriesCopiedCount of the copy operation, too.)
-SELECT count() AS backfilled_l1 FROM gcl.gcl_logs_v1 WHERE MessageId = '';
-SELECT count() - uniqExact(LogName, InsertId, Timestamp) AS duplicate_entries FROM gcl.gcl_logs_v1;   -- 0
+--   Only backfilled rows (MessageId = '') are checked: live rows can carry expected Pub/Sub redeliveries
+--   (verify/checks.sql 3 counts those).
+SELECT count() AS backfilled_l1,
+       count() - uniqExact(LogName, InsertId, Timestamp) AS duplicate_entries   -- 0
+FROM gcl.gcl_logs_v1
+WHERE MessageId = '' AND ReceiveTimestamp < toDateTime64('{{T0}}', 3, 'UTC') + INTERVAL 10 MINUTE;

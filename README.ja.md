@@ -6,7 +6,8 @@ Google Cloud Logging（以下 Cloud Logging）のログを、Log Router の Pub/
 テーブル設計、Terraform、SQL、検証用の合成ログ、運用手順をまとめています。
 取り込んだログは、マテリアライズドビュー（MV）で解析・整形します。
 
-本サンプルの挙動は、実機で確認しています。
+本サンプルの主な挙動は実機で確認しています。
+未検証の項目は検証記録の末尾にあります。
 検証日、バージョン、条件、測定値は [検証記録](docs/ja/findings.md) にあります。
 Pub/Sub ClickPipes は検証時点（2026-10）で Private Preview でした。
 挙動は今後変わる可能性があるため、採用前に [ハンズオン](docs/ja/hands-on.md) で同じ確認を利用者の環境で行ってください。

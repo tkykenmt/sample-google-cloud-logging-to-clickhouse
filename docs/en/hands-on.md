@@ -122,6 +122,7 @@ cd terraform
 cat > terraform.tfvars <<'EOF'
 gcp_project_id        = "<sandbox project>"
 clickhouse_service_id = "<service id>"
+topic_storage_regions = ["<service region, e.g. asia-northeast1>"]
 EOF
 terraform init
 terraform apply
@@ -150,6 +151,8 @@ verify/completeness.sh sent_ids.txt
 `missing_in_l1` equals the number of Lease updates, which L1 does not keep.
 To check L1 completeness on its own, publish without `--lease-rate` and confirm `missing_in_l1` is 0.
 Entries resent with `--dup-rate` get a new `MessageId` from Pub/Sub, so they do not count in `dup_ids_*`.
+`dup_ids_*` counts Pub/Sub redeliveries (the same `MessageId` delivered twice).
+Redeliveries happen (0 to 3% in testing); a non-zero value is not data loss.
 
 ### 2-5. Search in ClickStack
 
@@ -175,11 +178,14 @@ After T has passed, backfill the rows before T from L0.
 The end of the backfill file prints the same aggregate from the L2 and from L1.
 
 ```bash
+while [[ "$(date -u +"%Y-%m-%d %H:%M:%S")" < "$T" ]]; do sleep 10; done   # wait until T has passed
 python3 tools/chq.py --var T="$T" sql/examples/l2_audit_events_v1_backfill.sql
 python3 tools/chq.py -q "SELECT
-  (SELECT count() FROM gcl.audit_events_v1) AS l2,
-  (SELECT count() FROM gcl.gcl_logs_v1 WHERE mapContains(LogAttributes, 'audit.methodName')) AS l1_audit"
+  (SELECT uniqExact(MessageId) FROM gcl.audit_events_v1) AS l2,
+  (SELECT uniqExact(MessageId) FROM gcl.gcl_logs_v1 WHERE mapContains(LogAttributes, 'audit.methodName')) AS l1_audit"
 ```
+
+Pub/Sub redeliveries can put rows with the same `MessageId` into L1, so compare distinct `MessageId`s, not row counts.
 
 Details and how to rework an L2 are under "Creating and reworking an L2" in [Operations](operations.md).
 
@@ -191,7 +197,7 @@ As with the L2, create the MV, wait until T has passed, then fill the past.
 ```bash
 T=$(date -u -v+3M +"%Y-%m-%d %H:%M:%S" 2>/dev/null || date -u -d '+3 min' +"%Y-%m-%d %H:%M:%S")
 python3 tools/chq.py --var L3=logs_by_logid_1m_v1 --var L3_TTL_DAYS=400 --var MV_DEFINER=default --var T="$T" sql/runbooks/09_add_l3.sql
-# after T has passed
+while [[ "$(date -u +"%Y-%m-%d %H:%M:%S")" < "$T" ]]; do sleep 10; done   # wait until T has passed
 python3 tools/chq.py --var L3=logs_by_logid_1m_v1 --var T="$T" --var CHECK_TO="$(date -u +'%Y-%m-%d %H:%M:00')" \
   sql/runbooks/09_add_l3_backfill.sql
 ```
@@ -237,16 +243,17 @@ SA=clickpipes-handson
 SA_EMAIL=$SA@$P.iam.gserviceaccount.com
 ROLE=clickpipesHandson
 KEY=handson-key.json
+REGION=asia-northeast1   # region of the ClickHouse Cloud service
 ```
 
 ### 3-2. Topic
 
 ```bash
-gcloud pubsub topics create $TOPIC --project $P
+gcloud pubsub topics create $TOPIC --project $P --message-storage-policy-allowed-regions=$REGION
 ```
 
 The sink's destination.
-No message retention: the replay data stays in L0 in ClickHouse ([Design](design.md), "Pub/Sub and ClickPipes").
+No message retention, and message storage restricted to the region of the ClickHouse Cloud service: the replay data stays in L0 in ClickHouse ([Design](design.md), "Pub/Sub and ClickPipes").
 
 ### 3-3. Sink and publish permission
 
@@ -271,8 +278,11 @@ gcloud iam roles create $ROLE --project $P --title="ClickPipes Pub/Sub ingestion
 gcloud iam service-accounts create $SA --project $P
 gcloud projects add-iam-policy-binding $P --member="serviceAccount:$SA_EMAIL" \
   --role="projects/$P/roles/$ROLE" --condition=None
-gcloud iam service-accounts keys create $KEY --iam-account=$SA_EMAIL
+until gcloud iam service-accounts keys create $KEY --iam-account=$SA_EMAIL; do sleep 10; done   # right after creation the account can be NOT_FOUND: retry until it propagates
 ```
+
+A new service account can be invisible to key creation for a few seconds (it returned `NOT_FOUND` in testing).
+The last line retries every 10 seconds until it succeeds.
 
 These are the permissions of the official least-privilege role ([Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)).
 ClickPipes creates and deletes its managed subscription (`clickpipes-<pipe id>`) itself, so it needs subscription create and delete.
@@ -311,8 +321,9 @@ If creation fails for missing permissions, wait a minute or two for IAM to propa
 
 ### 3-7. ClickStack source
 
-Under Team Settings > Sources in ClickStack, create a log source with these values.
-They are the same as in `terraform/clickstack.tf`.
+Under Team Settings > Sources in ClickStack, create a log source.
+The fields and values on the page are in "8. Create the ClickStack source" of [Setup in the browser](setup-console.md).
+The JSON below is the same configuration in API field names (the same values as `terraform/clickstack.tf`).
 The dashboard is created by Terraform only (`terraform/clickstack/dashboard.json.tftpl`).
 
 ```json
