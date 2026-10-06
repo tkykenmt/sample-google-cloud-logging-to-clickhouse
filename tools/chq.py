@@ -8,7 +8,7 @@ Variables: --var NAME=VALUE replaces {{NAME}} in the SQL text.
 """
 import argparse, os, re, subprocess, sys
 
-END = re.compile(r";\s*(--[^']*)?$")  # ';' at the end of a line, before an optional trailing comment
+END = re.compile(r";\s*(--.*)?$")  # ';' at the end of a line, before an optional trailing comment
 
 def statements(text):
     buf = []
@@ -32,8 +32,10 @@ def statements(text):
 def run(service, sql, fmt):
     has_format = re.search(r"\bFORMAT\s+\w+\s*$", sql, re.IGNORECASE)
     q = sql if (has_format or not sql.lstrip().upper().startswith(("SELECT", "WITH", "SHOW", "EXPLAIN", "DESCRIBE"))) else f"{sql}\nFORMAT {fmt}"
+    # Runs in the current directory: clickhousectl prefers ./.clickhouse/credentials.json over the
+    # CLICKHOUSE_CLOUD_API_KEY/SECRET environment variables, so run from a directory without other credentials.
     r = subprocess.run(["clickhousectl", "cloud", "service", "query", "--id", service, "-q", q],
-                       capture_output=True, text=True, cwd=os.path.expanduser("~"))
+                       capture_output=True, text=True)
     out = (r.stdout + r.stderr).strip()
     return r.returncode, out
 

@@ -33,7 +33,8 @@ ClickHouse Cloud Console の Services で「New service」を開き、次を選�
 - Service name：サービス名
 - Cloud provider：GCP
 - Region：トピックのメッセージを保存するリージョン（例：Tokyo (asia-northeast1)）
-- Memory and scaling：検証なら「Mini」で足ります。画面にもあるとおり、1 レプリカの構成は本番には勧められないので、本番では「Standard」などを選びます。
+- Memory and scaling：検証なら「Mini」で足ります。
+  画面にもあるとおり、1 レプリカの構成は本番には勧められないので、本番では「Standard」などを選びます。
 
 ![サービスの作成](../images/console/01_create_service.png)
 
@@ -44,7 +45,9 @@ ClickHouse Cloud Console の Services で「New service」を開き、次を選�
 
 Google Cloud Console の Pub/Sub で Topics の「Create topic」を開き、Topic ID を入れます。
 
-- **「Add a default subscription」のチェックを外します。** 既定でオンになっています。ClickPipes は自分の購読を作るので、既定の購読は使われずにメッセージが溜まり続け、料金がかかります。
+- **「Add a default subscription」のチェックを外します。**
+  既定でオンになっています。
+  ClickPipes は自分のサブスクリプションを作るので、既定のサブスクリプションは使われずにメッセージが溜まり続け、料金がかかります。
 - 「Enable message retention」はオフのままにします（再処理の元は ClickHouse の L0 に残すため）。
 
 ![トピックの作成](../images/console/02_topic_create.png)
@@ -80,12 +83,13 @@ Logging の Log router で「Create sink」を開きます。
 
 1. Log router でシンクのメニューから「View sink details」を開き、「Writer identity」を控える。
 2. トピックの「Permissions」に、その ID が Pub/Sub Publisher として表示されていることを確かめる。
-3. 表示されていなければ（オーナー権限がない、トピックが別のプロジェクトにあるなど）、トピックの「Permissions」から、その ID に Pub/Sub Publisher を付ける。権限を付けるまでの間、シンクは公開に失敗し、その分のログはトピックに届きません。
+3. 表示されていなければ（オーナー権限がない、トピックが別のプロジェクトにあるなど）、トピックの「Permissions」から、その ID に Pub/Sub Publisher を付ける。
+   権限を付けるまでの間、シンクは公開に失敗し、その分のログはトピックに届きません。
 
 ## 4. ClickPipes 用のカスタムロールを作る
 
 IAM & Admin の Roles で「Create role」を開き、Title、Description、ID を入れます。
-「Add permissions」で次の 7 つの権限を追加します（公式の最小権限ロール、[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）。
+「Add permissions」で次の権限を追加します（公式の最小権限ロール、[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）。
 
 - `pubsub.topics.list`
 - `pubsub.topics.get`
@@ -101,7 +105,7 @@ IAM & Admin の Roles で「Create role」を開き、Title、Description、ID �
 
 ![カスタムロール](../images/console/04_role_create.png)
 
-このロールは、プロジェクト内のトピックの一覧と、購読の作成、受信、削除を許します。
+このロールは、プロジェクト内のトピックの一覧と、サブスクリプションの作成、受信、削除を許します。
 範囲が広すぎる場合は、ログの送出専用のプロジェクトにトピックを置きます。
 
 ## 5. サービスアカウントを作り、鍵を作る
@@ -117,8 +121,10 @@ Permissions で、4 のカスタムロールを選び、「Done」を押しま�
 
 作ったサービスアカウントの「Keys」で「Add key」→「Create new key」→「JSON」→「Create」を押すと、鍵のファイルがダウンロードされます。
 
-- 鍵ファイルはトピックを読むための認証情報です。パスワードと同じように扱い、共有ドライブや Git に置きません。
-- ClickPipe に渡した後は、手元のファイルを削除してかまいません。鍵を作り直すときは、同じ画面で新しい鍵を作ります。
+- 鍵ファイルはトピックを読むための認証情報です。
+  パスワードと同じように扱い、共有ドライブや Git に置きません。
+- ClickPipe に渡した後は、手元のファイルを削除してかまいません。
+  鍵を作り直すときは、同じ画面で新しい鍵を作ります。
 - 組織のポリシー（`iam.disableServiceAccountKeyCreation`）で鍵の作成が禁止されている場合は、許可された手順で作った鍵を使います。
 
 ## 6. テーブルと MV を作る
@@ -199,6 +205,7 @@ Default Select と、「Configure Optional Fields」で開く項目を次のと�
 | Span Id Expression | `SpanId` |
 | Implicit Column Expression | `Body` |
 | Use Text Index | Auto（既定） |
+| Highlighted Attributes（任意） | `ResourceType`（別名 `type`）、`LogId`（`log`）、`ProjectId`（`project`） |
 
 「Add Setting」はソースごとのクエリ設定を足す欄で、この構成では使いません。
 空の行ができたら、ゴミ箱のボタンで消してから保存します。
@@ -228,11 +235,14 @@ L0 の行数は、L1 とノイズの件数の合計とほぼ一致します（L1
 作った順の逆に削除します。
 
 1. ClickHouse Cloud Console の Data sources で ClickPipe を削除する。
-2. Pub/Sub の Subscriptions で、管理サブスクリプション（`clickpipes-<パイプ ID>`）が消えるのを待つ。ClickPipes は、パイプの削除後に 5 のサービスアカウントで購読を消します。購読が消える前に 5 や 4 を削除すると、購読が削除済みのトピック（`_deleted-topic_`）を指したまま残ります（Terraform での検証では、パイプの削除から 23 秒で消えました）。
+2. Pub/Sub の Subscriptions で、管理サブスクリプション（`clickpipes-<パイプ ID>`）が消えるのを待つ。
+   ClickPipes は、パイプの削除後に 5 のサービスアカウントでサブスクリプションを消します。
+   消える前に 5 や 4 を削除すると、サブスクリプションが削除済みのトピック（`_deleted-topic_`）を指したまま残ります（Terraform での検証では、パイプの削除から 23 秒で消えました）。
 3. SQL コンソールで `DROP DATABASE IF EXISTS gcl SYNC` を実行する。
 4. Log router でシンクを削除する。
 5. Pub/Sub でトピックを削除する。
 6. IAM でサービスアカウントのロールの付与を外し、Service accounts でサービスアカウントを削除する（鍵も無効になる）。
-7. Roles でカスタムロールを削除する。7 日以内なら復元でき、完全に削除されるまで同じ ID では作り直せません。
+7. Roles でカスタムロールを削除する。
+   7 日以内なら復元でき、完全に削除されるまで同じ ID では作り直せません。
 8. ClickStack の Team Settings の Sources で、8 で作ったソースを削除する。
 9. 1 で作ったサービスを使わない場合は、サービスを削除する。

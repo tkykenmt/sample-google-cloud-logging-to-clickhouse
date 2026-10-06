@@ -97,12 +97,12 @@ Otherwise, search L1 and extract values into tables and charts.
 | Signal for an L2 | Try first |
 |---|---|
 | A screen used daily exceeds its target response time (e.g. a few seconds) on L1 | Narrow the time range. Use an L3 aggregate |
-| You often filter on a column (an audit log operator, a node pool) and the L1 sort key cannot skip data for it | Move the value into a column that is in the L1 sort key (such as `ServiceName`) |
+| You often filter on a column (an audit log operator, a node pool) and the L1 sort key cannot skip data for it | Consider whether the value can be expressed through a column already in the L1 sort key (such as `ServiceName`) |
 | Time or number calculations are heavy or error-prone to write in every query, or are used in alert conditions | Write the expression once in a dashboard tile |
 | You need separate retention, access, or deletion rules per log kind | None (an L2 separates them) |
 | You need deduplicated results or only the latest state | Use `LIMIT 1 BY` at query time |
 
-- The amount L1 reads is mostly set by the number of rows in the time range. For reference, a table extracted from L1 took 0.16 s for one day (1.1 million rows) and 0.6 s for nine days (18.94 million rows). The same table from a typed table took 13 ms. (verified)
+- The amount L1 reads is mostly set by the number of rows in the time range. A table extracted from L1 took 0.16 s for one day (1.1 million rows) and 0.6 s for nine days (18.94 million rows). The same table from a typed table took 13 ms. (verified)
 - Do not build an L2 for one-off investigations, low-volume logs, or logs whose payload shape is not stable.
 - Add an L3 when long-range trend charts must be fast or when aggregates must be kept longer than rows.
 
@@ -137,7 +137,9 @@ The Pub/Sub free tier is 10 GiB per billing account per month, shared by publish
 - The JSON a sink exports is larger than the billable Cloud Logging volume. In testing it was about 1.2 times for the log types Cloud Logging bills. Pub/Sub (publish plus delivery) then costs about 20% of Cloud Logging ingestion (1.2 × $40/TiB × 2 ÷ $0.50/GiB).
 - The ratio depends heavily on your log mix, so estimate from the metrics above after starting the parallel run.
 - On the delivery side, acks and ack deadline extensions were also counted in `byte_cost`. The price list names publish and delivery as billable; check your bill for whether acks and extensions are charged. (PoC)
-- A stopped pipe's managed subscription keeps accumulating messages, and messages older than one day incur storage charges. Delete pipes you no longer use. (verified)
+- A stopped pipe's managed subscription keeps accumulating messages. (verified)
+  Messages older than one day incur storage charges. (docs: [storage costs](https://cloud.google.com/pubsub/pricing#storage_costs))
+  Delete pipes you no longer use.
 
 ## Decisions for your environment
 
@@ -145,14 +147,17 @@ The Pub/Sub free tier is 10 GiB per billing account per month, shared by publish
 |---|---|---|
 | Sink scope | All logs of the project | An aggregated sink for multiple projects |
 | Topic message retention | None | Enable briefly only when a pipe swap must seek back |
-| Topic storage region | Not restricted | Whether to pin it to the ClickHouse Cloud region |
+| Topic storage region | Not restricted (Terraform default) | Pin it to the region of the ClickHouse Cloud service (`topic_storage_regions`); crossing regions adds delivery egress charges |
 | ClickPipes replicas | One (smallest size) | Measure volume and latency |
+| ClickPipes insert wait | 5 s (`streaming_max_insert_wait_ms` default) | In testing the pipe inserted 212 rows on average every 7.7 s, creating a part in four tables per insert. With little volume and too many parts, raise it (logs then take longer to appear; effect not tested) |
 | L0 retention | 7 days | Ingest delay + switch and backfill + reconciliation and rollback, plus margin |
 | L1 retention | 400 days | Retention requirements per log kind and privacy rules |
 | Body full-text index | `ngrams(2)` | `splitByNonAlpha` if there are no Japanese logs |
 | Attribute Map serialization | `with_buckets` for merged parts, default split threshold (32 keys on average) | Measure the average keys per row; lower the threshold only if it is well above 32 and single-key filters are common |
 | L2 (typed tables) | None | Only for requirements that match the signals above |
 | L3 (aggregates) | Per-minute counts from L1 | Whether you need long-range trends or long-lived aggregates |
+| Aggregate table partitions | Daily (`sql/40`, `sql/50`) | The aggregate tables are small (490 KB for 13 days in testing); monthly (`toYYYYMM`) means fewer partitions and parts, but expiry then drops whole months, so retention can run up to a month longer |
+| Numeric and IP types | `HttpLatencySeconds` Float64, `HttpRemoteIp` String | Float32 and IPv6 are smaller (IPv6 turns empty or invalid values into `::`) |
 | Noise rules | Kubernetes Lease updates, as an example | Find them among the top counts during the parallel run |
 | Service replicas | 2 or more, no idle scaling to zero | Search load and availability requirements |
 | Alert destinations | ― | L0 to L1 gap, failed inserts, gap against the sink's export count |
@@ -234,8 +239,9 @@ Treat ClickHouse as a copy for analysis alongside other logs.
 
 - Format JSONEachRow, destination the existing L0. Only the virtual columns `_raw_message`, `_message_id`, `_publish_time`, and `_attributes` are mapped.
 - The start position can be latest, earliest, or timestamp at creation. (verified)
-- "Only destination table" permissions are enough, provided the MVs use `SQL SECURITY DEFINER`. (verified)
-- The managed subscription is created automatically in the topic's project as `clickpipes-<pipe id>`, with 7-day retention, a 60 s ack deadline, and ordering enabled ([docs](https://clickhouse.com/docs/integrations/clickpipes/pubsub/overview)). It expires after 31 days of inactivity (the Pub/Sub default expiration), is deleted with the pipe, and is kept when the pipe is only stopped. (verified)
+- "Only destination" permissions are enough, provided the MVs use `SQL SECURITY DEFINER`. (verified)
+- The managed subscription is created automatically in the topic's project as `clickpipes-<pipe id>`, with 7-day retention, a 60 s ack deadline, and ordering enabled ([docs](https://clickhouse.com/docs/integrations/clickpipes/pubsub/overview)). Its expiration is set to 31 days, so it expires after 31 days of inactivity (setting observed, expiry itself not tested; [Pub/Sub default expiration](https://cloud.google.com/pubsub/docs/subscription-properties)).
+  It is deleted with the pipe and kept when the pipe is only stopped. (verified)
 - Unacknowledged messages on the managed subscription incur no storage charge within one day of publishing. If ingestion stops for more than a day, the backlog starts incurring storage. (docs: [storage costs](https://cloud.google.com/pubsub/pricing#storage_costs))
 - The pipe inserts about every 5 seconds. Publish to stored took about 3 s at the median and about 5 s at p99. (verified)
 - Start with the default single replica (smallest size) and add replicas and size while measuring latency. (docs; values for your volume are PoC)
@@ -250,7 +256,6 @@ Treat ClickHouse as a copy for analysis alongside other logs.
 ### Table definitions
 
 The DDL in `sql/` is the source of truth for columns and settings.
-This section groups them by role.
 
 **L0 `gcl_landing_v1`** (`sql/10_landing_v1.sql`)
 
@@ -303,7 +308,8 @@ L2 examples are in `sql/examples/` (`audit_events_v1` sorted by principal, `gke_
 
 ### L1: parsing and the main table
 
-The MV parses the LogEntry once with `JSONExtract(_raw_message, 'Tuple(...)')` and reads every column from the named tuple.
+The MV parses the LogEntry envelope in one `JSONExtract(_raw_message, 'Tuple(...)')` call and reads the columns from the named tuple.
+Each row is also read by `isValidJSON` (for `ParseOk`) and `JSONExtractKeys` (to find fields without a column).
 Compared with one `JSONExtract*` call per field, CPU time was about 1/2.7. (verified)
 
 **Time**
@@ -335,7 +341,7 @@ The first of these that exists:
 6. For other protoPayloads, "[type name] leading part"
 7. Otherwise "[log id]"
 
-Body and ServiceName are always filled, for every kind of log. (verified)
+Body and ServiceName were never empty for the log kinds tested (audit logs, GKE, Compute Engine, App Engine, load-balancer style, no payload, and others). (verified)
 
 **Attribute naming**
 
@@ -365,7 +371,7 @@ Body and ServiceName are always filled, for every kind of log. (verified)
 
 No column is Nullable.
 Missing values become the type's default.
-ClickHouse advises avoiding Nullable because it keeps a separate null marker that slows queries, and the ClickStack default schema does not use Nullable either. (verified)
+ClickHouse advises avoiding Nullable because it keeps a separate null marker that slows queries, and the ClickStack default schema does not use Nullable either. (docs: [avoid Nullable](https://clickhouse.com/docs/best-practices/select-data-types#avoid-nullable-columns))
 
 | LogEntry value | String column | Number column | Bool column | Attribute (Map) |
 |---|---|---|---|---|
@@ -405,8 +411,8 @@ An L2 also reads L0, so it repeats the condition (`sql/examples/l2_audit_events_
 
 ClickStack turns the words in the search box into `hasAllTokens(lower(Body), lower('word'))` and uses the text index on `lower(Body)`.
 Some search paths emit `hasToken` instead.
-The 2-character n-gram index was used for both forms on ClickHouse Cloud 26.6, but some versions use it only for `hasAllTokens`.
-Check with EXPLAIN on your version (check 7 in `verify/checks.sql`). (verified)
+The 2-character n-gram index was used for both forms on ClickHouse Cloud 26.6, but only for `hasAllTokens` on clickhouse local 26.7. (verified)
+Check with EXPLAIN on your version (check 7 in `verify/checks.sql`).
 
 With a word tokenizer (`splitByNonAlpha`), a Japanese sentence becomes a single token.
 Searching a Japanese word then returns zero rows without an error.
@@ -420,7 +426,7 @@ Example on about 1.1 million synthetic rows (verified):
 | 2-character n-grams (ngrams(2)) | 92,517 | 70,311 | 15.1 MiB |
 | Reference: counted with LIKE | 92,517 | 70,311 | ― |
 
-- Where logs contain Japanese, index `lower(Body)` with `ngrams(2)`. English words return the same counts. The index is about 4.5 times the word index.
+- Where logs contain Japanese, index `lower(Body)` with `ngrams(2)`. English words return the same counts. The index is about 4.5 times the size of the word index.
 - An expression can have only one text index, so both tokenizers cannot be used at once.
 - One-character words cannot be searched; use SQL LIKE for those.
 - A row matches when it contains every 2-character piece, so other orderings match too: a body containing ムアウトタイム also matches タイムアウト. Use LIKE when an exact count matters. (verified)
@@ -473,5 +479,5 @@ The examples are in `sql/examples/`:
 | Ingest latency | p99 from `_publish_time` to stored (check 1) | Not enough pipe capacity |
 | Sink export errors | Cloud Monitoring `logging.googleapis.com/exports/error_count` | Sink permission or topic problems |
 
-An MV failure left alone stops the pipe after about 60 minutes.
+In testing, an MV failure left alone stopped the pipe after about 60 minutes.
 Alert on the L0 to L1 gap and on failed inserts.

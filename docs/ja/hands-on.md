@@ -4,9 +4,12 @@
 
 どの部も、最後に作ったものを削除して終わります。
 
-- **第 1 部（ローカル環境、約 10 分）**：`clickhouse local` だけで、L0 から L1、L2、L3 までの SQL を動かし、日本語の検索とノイズの除外条件を確かめます。クラウドのリソースは作りません。
+- **第 1 部（ローカル環境、約 10 分）**：`clickhouse local` だけで、L0 から L1、L2、L3 までの SQL を動かし、日本語の検索とノイズの除外条件を確かめます。
+  クラウドのリソースは作りません。
 - **第 2 部（実環境、約 60 分）**：検証用の Google Cloud プロジェクトと ClickHouse Cloud のサービスに Terraform で環境を構築し、合成ログを送信して ClickStack で検索します。
-- **第 3 部（実環境、約 30 分）**：第 2 部で Terraform が作ったものを、`gcloud` と `clickhousectl` で 1 つずつ作り、それぞれの役割を確かめます。導入の手順ではありません。導入には [導入](setup.md) の Terraform を使います。
+- **第 3 部（実環境、約 30 分）**：第 2 部で Terraform が作ったものを、`gcloud` と `clickhousectl` で 1 つずつ作り、それぞれの役割を確かめます。
+  導入の手順ではありません。
+  導入には [導入](setup.md) の Terraform を使います。
 
 設計の背景は [設計](design.md)、本番向けの導入手順は [導入](setup.md) にあります。
 
@@ -26,10 +29,12 @@ WORKDIR=/tmp/gcl-handson verify/local_e2e.sh 20000
 
 このスクリプトは次のことを行います。
 
-1. `loadgen/gen_logentry.py` で、Cloud Logging のシンクが送る形の LogEntry を 2 万件ずつ 2 回生成する。1 回目には Kubernetes の Lease の更新（ノイズの例）を 2 割混ぜる。
-2. `sql/10`〜`sql/50` で L0、L1、MV1、L3（分単位の件数）、ノイズの件数を作る。
+1. `loadgen/gen_logentry.py` で、Cloud Logging のシンクが送る形の LogEntry を 2 万件ずつ 2 回生成する。
+   1 回目には Kubernetes の Lease の更新（ノイズの例）を 2 割混ぜる。
+2. `sql/10`〜`sql/50` で L0、L1、L3（分単位の件数）、ノイズの集計テーブルと、それらを作る MV を作る。
 3. 1 回目の分を、ClickPipe と同じ形（生メッセージと Pub/Sub の仮想列）で L0 に入れる。
-4. 境界時刻 T を決めて L2 の例（`sql/examples/l2_audit_events_v1.sql`）の MV を作り、2 回目の分を入れる。T より前の 1 回目の分は `sql/examples/l2_audit_events_v1_backfill.sql` で L0 からバックフィルする。
+4. 境界時刻 T を決めて L2 の例（`sql/examples/l2_audit_events_v1.sql`）の MV を作り、2 回目の分を入れる。
+   T より前の 1 回目の分は `sql/examples/l2_audit_events_v1_backfill.sql` で L0 からバックフィルする。
 5. 件数を突き合わせる。
 
 結果は次のように表示されます（件数は乱数で変わります）。
@@ -53,7 +58,8 @@ WORKDIR=/tmp/gcl-handson verify/local_e2e.sh 20000
 - 2 と 3：Lease の更新は L1 に入らず、件数だけがノイズの集計テーブルに残ります。
 - 4：L3 の合計は L1 の行数と一致します。
 - 5 と 6：L2 は、MV で入った分とバックフィルの分を合わせて L1 の監査ログと同じ件数になり、重複もありません。
-- 9：2 文字ずつの全文検索インデックスで「タイムアウト」を探した件数が、LIKE で数えた件数と一致します。合成ログには、別の並びで同じ 2 文字の断片を含む本文がないためです（[設計](design.md) の「日本語の検索」）。
+- 9：2 文字ずつの全文検索インデックスで「タイムアウト」を探した件数が、LIKE で数えた件数と一致します。
+  合成ログには、別の並びで同じ 2 文字の断片を含む本文がないためです（[設計](design.md) の「日本語の検索」）。
 - 10：`verify/checks.sql` の 2 番（L1 に届いていない行）は、ノイズとして外した行を数えません。
 - 11：Compute Engine のログの ServiceName は、VM の名前になります。
 
@@ -89,7 +95,8 @@ q "SELECT LogAttributes['audit.principalEmail'] AS who, LogAttributes['audit.met
    FROM gcl.gcl_logs_v1 WHERE mapContains(LogAttributes, 'audit.methodName') GROUP BY ALL ORDER BY 3 DESC"
 ```
 
-**L2 との比較**：L2 から同じ情報を取り出す例です。L2 は操作者の順に並んでいるため、操作者で絞り込むクエリでは読み取り量を減らせます。
+**L2 との比較**：L2 から同じ情報を取り出す例です。
+L2 は操作者の順に並んでいるため、操作者で絞り込むクエリでは読み取り量を減らせます。
 
 ```bash
 q "SELECT Principal, MethodName, count() FROM gcl.audit_events_v1 GROUP BY ALL ORDER BY 3 DESC"
@@ -113,7 +120,8 @@ q "SELECT Rule, Principal, sum(Cnt) FROM gcl.gcl_noise_1m_v1 GROUP BY ALL ORDER 
 - 検証用の Google Cloud プロジェクトと、ClickHouse Cloud のサービス（26.6 以降）
 - [導入](setup.md) の「前提」と「1. 認証」
 - 第 1 部の `clickhouse`（`verify/completeness.sh` が使う）
-- 合成ログを公開するアカウントに、トピックへの公開権限（`roles/pubsub.publisher`。プロジェクトのオーナーや編集者なら付いている）。`loadgen/gen_logentry.py` は `gcloud auth application-default print-access-token` のトークン（導入の「1. 認証」の ADC）を使います
+- 合成ログを公開するアカウントに、トピックへの公開権限（`roles/pubsub.publisher`。プロジェクトのオーナーや編集者なら付いている）。
+  `loadgen/gen_logentry.py` は `gcloud auth application-default print-access-token` のトークン（導入の「1. 認証」の ADC）を使います。
 
 ### 2-2. 環境を構築する
 
@@ -122,6 +130,7 @@ cd terraform
 cat > terraform.tfvars <<'EOF'
 gcp_project_id        = "<sandbox project>"
 clickhouse_service_id = "<service id>"
+topic_storage_regions = ["<service region, e.g. asia-northeast1>"]
 EOF
 terraform init
 terraform apply
@@ -155,9 +164,11 @@ Lease の更新を混ぜずに確かめるときは、`--lease-rate` を指定�
 
 [導入](setup.md) の「4. ClickStack のソースを作る（任意）」でソースとダッシュボードを作り、ClickStack を開きます。
 
-1. ソース「Cloud Logging」を選び、検索窓に `タイムアウト` と入れる。本文にその語を含むログが出る。
+1. ソース「Cloud Logging」を選び、検索窓に `タイムアウト` と入れる。
+   本文にその語を含むログが出る。
 2. 左のフィルタで ServiceName を `web-frontend` に絞る。
-3. Event Patterns に切り替え、本文の形ごとの件数を見る。Lease の更新は L1 に入っていないので、上位に出ない。
+3. Event Patterns に切り替え、本文の形ごとの件数を見る。
+   Lease の更新は L1 に入っていないので、上位に出ない。
 4. ダッシュボード「Cloud Logging overview」を開く。
 
 ### 2-6. L2 を追加する
@@ -175,11 +186,14 @@ T を過ぎてから、T より前の分を L0 からバックフィルします
 同じファイルの末尾で、L2 と L1 の集計を並べて出します。
 
 ```bash
+while [[ "$(date -u +"%Y-%m-%d %H:%M:%S")" < "$T" ]]; do sleep 10; done   # T を過ぎるまで待つ
 python3 tools/chq.py --var T="$T" sql/examples/l2_audit_events_v1_backfill.sql
 python3 tools/chq.py -q "SELECT
-  (SELECT count() FROM gcl.audit_events_v1) AS l2,
-  (SELECT count() FROM gcl.gcl_logs_v1 WHERE mapContains(LogAttributes, 'audit.methodName')) AS l1_audit"
+  (SELECT uniqExact(MessageId) FROM gcl.audit_events_v1) AS l2,
+  (SELECT uniqExact(MessageId) FROM gcl.gcl_logs_v1 WHERE mapContains(LogAttributes, 'audit.methodName')) AS l1_audit"
 ```
+
+Pub/Sub の再配信で L1 に同じ `MessageId` の行が入ることがあるので、行数ではなく `MessageId` の種類の数で比べます。
 
 手順の詳細と作り替えの方法は [運用](operations.md) の「L2 の新規作成と作り替え」にあります。
 
@@ -191,7 +205,7 @@ L2 と同じく、MV を作ってから T を過ぎるのを待ち、T より前
 ```bash
 T=$(date -u -v+3M +"%Y-%m-%d %H:%M:%S" 2>/dev/null || date -u -d '+3 min' +"%Y-%m-%d %H:%M:%S")
 python3 tools/chq.py --var L3=logs_by_logid_1m_v1 --var L3_TTL_DAYS=400 --var MV_DEFINER=default --var T="$T" sql/runbooks/09_add_l3.sql
-# after T has passed
+while [[ "$(date -u +"%Y-%m-%d %H:%M:%S")" < "$T" ]]; do sleep 10; done   # T を過ぎるまで待つ
 python3 tools/chq.py --var L3=logs_by_logid_1m_v1 --var T="$T" --var CHECK_TO="$(date -u +'%Y-%m-%d %H:%M:00')" \
   sql/runbooks/09_add_l3_backfill.sql
 ```
@@ -237,16 +251,17 @@ SA=clickpipes-handson
 SA_EMAIL=$SA@$P.iam.gserviceaccount.com
 ROLE=clickpipesHandson
 KEY=handson-key.json
+REGION=asia-northeast1   # ClickHouse Cloud のサービスのリージョン
 ```
 
 ### 3-2. トピック
 
 ```bash
-gcloud pubsub topics create $TOPIC --project $P
+gcloud pubsub topics create $TOPIC --project $P --message-storage-policy-allowed-regions=$REGION
 ```
 
 シンクの送信先です。
-メッセージ保持は設定しません。
+メッセージ保持は設定せず、保存先は ClickHouse Cloud のサービスと同じリージョンに限定します。
 再処理の元データは ClickHouse の L0 に残すためです（[設計](design.md) の「Pub/Sub と ClickPipes」）。
 
 ### 3-3. シンクと公開権限
@@ -276,7 +291,7 @@ gcloud iam service-accounts keys create $KEY --iam-account=$SA_EMAIL
 ```
 
 権限は公式の最小権限ロールと同じです（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）。
-ClickPipes は管理サブスクリプション（`clickpipes-<パイプ ID>`）を自分で作って消すので、購読の作成と削除の権限が要ります。
+ClickPipes は管理サブスクリプション（`clickpipes-<パイプ ID>`）を自分で作って消すので、サブスクリプションの作成と削除の権限が要ります。
 鍵ファイルはトピックを読むための認証情報です。
 パスワードと同じように扱い、Git に入れません（`.gitignore` で `*.json` を除外しています）。
 
@@ -313,8 +328,9 @@ clickhousectl cloud clickpipe get "$CH_SERVICE_ID" $PIPE_ID   # state が Runnin
 
 ### 3-7. ClickStack のソース
 
-ClickStack の Team Settings の Sources で、次の値のログソースを作ります。
-`terraform/clickstack.tf` と同じ値です。
+ClickStack の Team Settings の Sources で、ログソースを作ります。
+画面の項目と入れる値は、[ブラウザで導入する](setup-console.md) の「8. ClickStack のソースを作る」にあります。
+次の JSON は、同じ設定を API の項目名で表したものです（`terraform/clickstack.tf` と同じ値）。
 ダッシュボードは Terraform でだけ作ります（`terraform/clickstack/dashboard.json.tftpl`）。
 
 ```json

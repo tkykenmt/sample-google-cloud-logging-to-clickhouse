@@ -1,6 +1,7 @@
 #!/bin/bash
 # Compare the message IDs the load generator published with what landed in L0 and L1.
 # Usage: completeness.sh <sent_ids_file> [l0_table] [l1_table]
+# WINDOW_HOURS (default 6): only rows published in the last N hours are read, so a large L1 is not scanned.
 # Needs: clickhousectl (API key), clickhouse (local), CH_SERVICE_ID.
 # Explicit file() schemas: an empty L0/L1 (total loss) must report every ID missing, not fail on inference.
 # Noise rows never reach L1: run the load generator without --lease-rate, or expect missing_in_l1 = their count.
@@ -9,9 +10,10 @@ SENT=$1; L0=${2:-gcl.gcl_landing_v1}; L1=${3:-gcl.gcl_logs_v1}
 W=$(mktemp -d)
 sort -u "$SENT" > "$W/sent.txt"   # snapshot first, then let in-flight messages settle
 sleep "${SETTLE_SEC:-45}"
-q() { (cd ~ && clickhousectl cloud service query --id "$CH_SERVICE_ID" -q "$1"); }
-q "SELECT _message_id, count() FROM $L0 GROUP BY 1 FORMAT TSV" > "$W/l0.tsv"
-q "SELECT MessageId, count() FROM $L1 GROUP BY 1 FORMAT TSV" > "$W/l1.tsv"
+H=${WINDOW_HOURS:-6}
+q() { clickhousectl cloud service query --id "$CH_SERVICE_ID" -q "$1"; }
+q "SELECT _message_id, count() FROM $L0 WHERE _publish_time > now() - INTERVAL $H HOUR GROUP BY 1 FORMAT TSV" > "$W/l0.tsv"
+q "SELECT MessageId, count() FROM $L1 WHERE PublishTime > now() - INTERVAL $H HOUR GROUP BY 1 FORMAT TSV" > "$W/l1.tsv"
 clickhouse local -q "
 WITH
   (SELECT count() FROM file('$W/sent.txt', 'LineAsString', 'line String')) AS sent,

@@ -16,10 +16,14 @@ Google Cloud Logging（以下 Cloud Logging）のログを Pub/Sub と ClickPipe
 
 ## 要点
 
-- **構成**：Cloud Logging のシンクで全ログを Pub/Sub に送り、ClickPipes で ClickHouse Cloud に取り込みます。届いたログをそのまま残す L0 と、検索用の L1 の 2 層が必須です。
-- **使い方**：ログの種類を問わず L1 に格納できるため、検索、値の取り出し、ダッシュボードはまず L1 で行います。種類ごとの型付きテーブル（L2）や集計テーブル（L3）は、L1 で要件を満たせない場合にのみ追加します。
-- **費用が下がる条件**：Pub/Sub に送り始めただけでは、Cloud Logging の費用は下がりません。下がるのは `_Default` バケットへの保存を止めたときで、止める前に `_Default` のログを利用する機能を洗い出します。
-- **新たにかかる費用**：Pub/Sub の転送料、ClickPipes、ClickHouse Cloud です。Pub/Sub の転送料は Cloud Logging が課金しないログにもかかるので、並走中に実測して見積もります。
+- **構成**：Cloud Logging のシンクで全ログを Pub/Sub に送り、ClickPipes で ClickHouse Cloud に取り込みます。
+  届いたログをそのまま残す L0 と、検索用の L1 の 2 層が必須です。
+- **使い方**：ログの種類を問わず L1 に格納できるため、検索、値の取り出し、ダッシュボードはまず L1 で行います。
+  種類ごとの型付きテーブル（L2）や集計テーブル（L3）は、L1 で要件を満たせない場合にのみ追加します。
+- **費用が下がる条件**：Pub/Sub に送り始めただけでは、Cloud Logging の費用は下がりません。
+  下がるのは `_Default` バケットへの保存を止めたときで、止める前に `_Default` のログを利用する機能を洗い出します。
+- **新たにかかる費用**：Pub/Sub の転送料、ClickPipes、ClickHouse Cloud です。
+  Pub/Sub の転送料は Cloud Logging が課金しないログにもかかるので、並走中に実測して見積もります。
 - **日本語の検索**：本文の全文検索インデックスを 2 文字ずつの区切りにすれば、ClickStack で日本語の語を検索できます。
 - **利用者側で決めること**：対象のプロジェクト、ログの種類ごとの保持期間、閲覧できる人の範囲、過去のログの扱いなどです。
 
@@ -68,9 +72,12 @@ L2 の MV は L1 ではなく L0 を読みます。
 
 ## 日々の使い方：まず L1 で
 
-- **検索**：ClickStack の検索窓に語を入れると、本文の全文検索インデックスを使って検索します。属性（`audit.principalEmail` など）は「キー:値」で絞り込めます。
-- **値の取り出し**：属性から検索時に値を取り出して、表やグラフにできます。例えば `extract(LogAttributes['resource'], '/nodePools/([^/]+)')` でノードプール名を、`parseDateTime64BestEffortOrZero(LogAttributes['startTime'])` で時刻を取り出します。
-- **ダッシュボード**：GKE のアップグレード通知の表（ノードプール、版、件数、失敗、平均時間）を L1 だけで作ると、型付きテーブルで作った表と同じ結果になりました。（確認済み）
+- **検索**：ClickStack の検索窓に語を入れると、本文の全文検索インデックスを使って検索します。
+  属性（`audit.principalEmail` など）は「キー:値」で絞り込めます。
+- **値の取り出し**：属性から検索時に値を取り出して、表やグラフにできます。
+  例えば `extract(LogAttributes['resource'], '/nodePools/([^/]+)')` でノードプール名を、`parseDateTime64BestEffortOrZero(LogAttributes['startTime'])` で時刻を取り出します。
+- **ダッシュボード**：GKE のアップグレード通知の表（ノードプール、版、件数、失敗、平均時間）を L1 だけで作ると、型付きテーブルで作った表と同じ結果になりました。
+  （確認済み）
 - L1 のログソースは、Service Name に `ServiceName`、Severity に `SeverityText`、Body に `Body`、属性に `LogAttributes` と `ResourceAttributes` を割り当てます（`terraform/clickstack.tf`）。
 - L2 を作った場合は、別のソースとして登録します。
 
@@ -80,7 +87,8 @@ L2 の MV は L1 ではなく L0 を読みます。
 
 ![ClickStack で「タイムアウト」を検索した画面](../images/search-ja.png)
 
-**パターン抽出（Event Patterns）**：本文を似た形ごとにまとめ、件数の多い順に並べます。ノイズの除外条件を決めるときにも使います。
+**パターン抽出（Event Patterns）**：本文を似た形ごとにまとめ、件数の多い順に並べます。
+ノイズの除外条件を決めるときにも使います。
 
 ![パターン抽出の画面](../images/patterns.png)
 
@@ -102,7 +110,10 @@ L2 は任意です。
 | 保持期間、閲覧権限、削除の扱いを種類ごとに分けたい | なし（L2 で分ける） |
 | 重複を除いた結果や、最新の状態だけが欲しい | 検索時に `LIMIT 1 BY` を使う |
 
-- L1 の読み取り量は、対象期間の行数でほぼ決まります。参考までに、L1 から取り出す表は、1 日分（110 万行）が 0.16 秒、9 日分（1,894 万行）が 0.6 秒でした。同じ表を型付きテーブルから作ると 13 ms でした。（確認済み）
+- L1 の読み取り量は、対象期間の行数でほぼ決まります。
+  L1 から取り出す表は、1 日分（110 万行）が 0.16 秒、9 日分（1,894 万行）が 0.6 秒でした。
+  同じ表を型付きテーブルから作ると 13 ms でした。
+  （確認済み）
 - 一度きりの調査、量の少ないログ、内容の形式が安定していないログには、L2 を作りません。
 - L3 は、長期間の推移を示すグラフを高速化したい場合や、個々のログより集計結果を長く保持したい場合に追加します。
 
@@ -133,11 +144,21 @@ Pub/Sub の無料枠は、公開と配信を合わせて請求先アカウント
 
 **見積もりで気をつける点**
 
-- Pub/Sub の転送料は、Cloud Logging が課金しないログにもかかります。`_Required` 行きのログ（Admin Activity の監査ログなど）は、Cloud Logging では無料でも、シンクで送れば Pub/Sub の料金がかかります。量の多いものは、後述のノイズの対処を検討します。
-- シンクが送る JSON は、Cloud Logging の課金対象の量より大きくなります。検証では、Cloud Logging が課金する種類のログで約 1.2 倍でした。この場合、Pub/Sub（公開と配信）の料金は Cloud Logging の取り込み料の約 2 割になります（1.2 × $40/TiB × 2 ÷ $0.50/GiB）。
+- Pub/Sub の転送料は、Cloud Logging が課金しないログにもかかります。
+  `_Required` 行きのログ（Admin Activity の監査ログなど）は、Cloud Logging では無料でも、シンクで送れば Pub/Sub の料金がかかります。
+  量の多いものは、後述のノイズの対処を検討します。
+- シンクが送る JSON は、Cloud Logging の課金対象の量より大きくなります。
+  検証では、Cloud Logging が課金する種類のログで約 1.2 倍でした。
+  この場合、Pub/Sub（公開と配信）の料金は Cloud Logging の取り込み料の約 2 割になります（1.2 × $40/TiB × 2 ÷ $0.50/GiB）。
 - ログの構成で比率は大きく変わるので、並走を始めてから上の指標で実測して見積もります。
-- 配信側では、ack と ack 期限の延長も `byte_cost` に計上されました。料金表が課金対象として挙げるのは公開と配信で、ack と期限の延長が課金されるかは請求の内訳で確かめます。（PoC で確認）
-- 停止したパイプの管理サブスクリプションにはメッセージが蓄積し続け、公開から 1 日を超えた分に保管料がかかります。使わなくなったパイプは削除します。（確認済み）
+- 配信側では、ack と ack 期限の延長も `byte_cost` に計上されました。
+  料金表が課金対象として挙げるのは公開と配信で、ack と期限の延長が課金されるかは請求の内訳で確かめます。
+  （PoC で確認）
+- 停止したパイプの管理サブスクリプションにはメッセージが蓄積し続けます。
+  （確認済み）
+  公開から 1 日を超えた分には保管料がかかります。
+  （公式資料：[保管料](https://cloud.google.com/pubsub/pricing#storage_costs)）
+  使わなくなったパイプは削除します。
 
 ## 利用者の環境で決めること
 
@@ -145,14 +166,17 @@ Pub/Sub の無料枠は、公開と配信を合わせて請求先アカウント
 |---|---|---|
 | シンクの範囲 | プロジェクトの全ログ | 複数のプロジェクトなら集約シンク |
 | トピックのメッセージ保持 | なし | パイプの差し替えで遡るときだけ、短く有効にする |
-| トピックの保存リージョン | 指定なし | ClickHouse Cloud と同じリージョンに固定するかを決める |
+| トピックの保存リージョン | 指定なし（Terraform の既定） | ClickHouse Cloud のサービスと同じリージョンに固定する（`topic_storage_regions`）。リージョンをまたぐと配信に転送料がかかる |
 | ClickPipes のレプリカ | 1 つ（最小サイズ） | 取り込み量と遅延を測って決める |
+| ClickPipes の INSERT の待ち時間 | 5 秒（`streaming_max_insert_wait_ms` の既定） | 検証環境では約 7.7 秒ごとに平均 212 行の INSERT で、1 回で 4 つのテーブルにパートができた。量が少なくパートが多すぎる場合は延ばす（ログが見えるまでの遅れも伸びる。効果は未検証） |
 | L0 の保持日数 | 7 日 | 取り込みの遅延、切り替えとバックフィル、照合とロールバックに必要な期間に余裕を加える |
 | L1 の保持日数 | 400 日 | ログの種類ごとの保持要件と、個人情報の規程 |
 | 本文の全文検索インデックス | `ngrams(2)` | 日本語のログがなければ `splitByNonAlpha` |
 | 属性の Map の保存形式 | マージ後は `with_buckets`、分割の下限は既定（平均 32 キー） | 1 行あたりのキーの平均を測り、32 個を大きく超えて 1 つのキーでの絞り込みが多ければ下限を下げる |
 | L2（型付きテーブル） | なし | 前述の判断基準に該当する要件があるときだけ作る |
 | L3（集計） | 分単位の件数（L1 から） | 長い期間の推移を見るか、集計だけを長く残すか |
+| 集計テーブルのパーティション | 日ごと（`sql/40`、`sql/50`） | 集計テーブルは小さい（検証環境で 13 日分 490 KB）ので、月ごと（`toYYYYMM`）にするとパーティションとパートが減る。期限切れが月単位で落ちるので、保持は最大 1 か月長くなる |
+| 数値と IP の型 | `HttpLatencySeconds` は Float64、`HttpRemoteIp` は String | Float32 や IPv6 型にすると小さくなる（IPv6 型では空や不正な値が `::` になる） |
 | ノイズの除外条件 | 例として Kubernetes の Lease の更新 | 並走中に件数の上位から見つける |
 | サービスのレプリカ | 2 以上、アイドル停止なし | 検索の負荷と可用性の要件 |
 | 監視の通知先 | ― | L0 と L1 の差、失敗した INSERT、シンクとの件数の差 |
@@ -190,9 +214,13 @@ PoC の前に、次のことを利用者の環境で決めておきます。
 
 **シンク**
 
-- 1 プロジェクトなら、シンクのフィルタを `logName:"projects/<project>/logs/"` にしてプロジェクトの全ログを送ります。種類の絞り込みは ClickHouse 側で行います。
-- 複数のプロジェクトをまとめるなら、組織またはフォルダに集約シンク（[aggregated sink](https://cloud.google.com/logging/docs/export/aggregated_sinks)）を作ります。L1 では `ProjectId` で絞り込めます。
-- シンクはそれぞれ独立にログを評価するので、Pub/Sub へのシンクを追加しても、既存の `_Default` バケットへの保存はそのまま続きます。Log Router の転送そのものに料金はかかりません。（公式資料：[ルーティングの概要](https://cloud.google.com/logging/docs/routing/overview)）
+- 1 プロジェクトなら、シンクのフィルタを `logName:"projects/<project>/logs/"` にしてプロジェクトの全ログを送ります。
+  種類の絞り込みは ClickHouse 側で行います。
+- 複数のプロジェクトをまとめるなら、組織またはフォルダに集約シンク（[aggregated sink](https://cloud.google.com/logging/docs/export/aggregated_sinks)）を作ります。
+  L1 では `ProjectId` で絞り込めます。
+- シンクはそれぞれ独立にログを評価するので、Pub/Sub へのシンクを追加しても、既存の `_Default` バケットへの保存はそのまま続きます。
+  Log Router の転送そのものに料金はかかりません。
+  （公式資料：[ルーティングの概要](https://cloud.google.com/logging/docs/routing/overview)）
 
 **_Default バケットへの保存を止めると変わるもの**
 
@@ -212,8 +240,11 @@ PoC の前に、次のことを利用者の環境で決めておきます。
 
 切り替え前に `_Default` などに保存されたログの扱いを、次のどちらかに決めます。
 
-- 期限まで Cloud Logging に残し、過去分はそちらで検索する。保持の料金は期限まで続く。
-- Cloud Storage へコピーしてから ClickHouse に取り込む。コピーした LogEntry を L0 と同じ形で入れれば、MV1 の解析をそのまま使える。（PoC で確認）
+- 期限まで Cloud Logging に残し、過去分はそちらで検索する。
+  保持の料金は期限まで続く。
+- Cloud Storage へコピーしてから ClickHouse に取り込む。
+  コピーした LogEntry を L0 と同じ形で入れれば、MV1 の解析をそのまま使える。
+  （PoC で確認）
 
 **監査ログの正本**
 
@@ -225,32 +256,57 @@ ClickHouse は、他のログと合わせて分析するための写しとして
 
 **トピック**
 
-- メッセージ保持は既定で有効にしません。保持を有効にすると、公開された全メッセージに保持期間分の保管料（$0.27/GiB・月）がかかります。（公式資料：[保管料](https://cloud.google.com/pubsub/pricing#storage_costs)）
-- 再処理に使う元データは L0 に保存しています。トピックの保持が必要なのは、パイプの差し替えで過去の時刻へ遡るときだけです。その場合も、新しいパイプを境界時刻より前に作れば遡る必要はありません。
-- 遡る作業をするときは、作業の前に短い保持（例：1 日）を有効にし、終わったら外します。保持を有効にする前のメッセージには遡れません。
-- Pub/Sub は少なくとも 1 回の配信なので、同じメッセージが二重に届くことがあります。重複は `MessageId` で見分けます。
+- メッセージ保持は既定で有効にしません。
+  保持を有効にすると、公開された全メッセージに保持期間分の保管料（$0.27/GiB・月）がかかります。
+  （公式資料：[保管料](https://cloud.google.com/pubsub/pricing#storage_costs)）
+- 再処理に使う元データは L0 に保存しています。
+  トピックの保持が必要なのは、パイプの差し替えで過去の時刻へ遡るときだけです。
+  その場合も、新しいパイプを境界時刻より前に作れば遡る必要はありません。
+- 遡る作業をするときは、作業の前に短い保持（例：1 日）を有効にし、終わったら外します。
+  保持を有効にする前のメッセージには遡れません。
+- Pub/Sub の配信は at-least-once（少なくとも 1 回）なので、同じメッセージが二重に届くことがあります。
+  重複は `MessageId` で見分けます。
 
 **ClickPipe**
 
-- 形式は JSONEachRow、宛先は既存の L0 です。`_raw_message`、`_message_id`、`_publish_time`、`_attributes` の仮想列だけを対応付けます。
-- 開始位置は、作成時に latest、earliest、timestamp から選べます。（確認済み）
-- 権限は「Only destination table」で足ります。MV が `SQL SECURITY DEFINER` 付きであることが条件です。（確認済み）
-- 管理サブスクリプションは `clickpipes-<パイプ ID>` という名前で、トピックと同じプロジェクトに自動で作られます。保持 7 日、ack 期限 60 秒、順序付けが有効です（[公式資料](https://clickhouse.com/docs/integrations/clickpipes/pubsub/overview)）。使われないまま 31 日たつと失効し（Pub/Sub の既定の有効期限）、パイプを削除すると消え、停止しただけでは残ります。（確認済み）
-- 管理サブスクリプションの未処理のメッセージは、公開から 1 日以内なら保管料がかかりません。取り込みが 1 日を超えて止まると、滞留に保管料がかかり始めます。（公式資料：[保管料](https://cloud.google.com/pubsub/pricing#storage_costs)）
-- パイプは約 5 秒ごとに INSERT します。公開から格納までは中央値 3 秒前後、p99 で約 5 秒でした。（確認済み）
-- レプリカは既定の 1 つ（最小サイズ）から始め、遅延を測りながらレプリカ数とサイズを増やします。（公式資料、量に応じた値は PoC で確認）
+- 形式は JSONEachRow、宛先は既存の L0 です。
+  `_raw_message`、`_message_id`、`_publish_time`、`_attributes` の仮想列だけを対応付けます。
+- 開始位置は、作成時に latest、earliest、timestamp から選べます。
+  （確認済み）
+- 権限は「Only destination」で足ります。
+  MV が `SQL SECURITY DEFINER` 付きであることが条件です。
+  （確認済み）
+- 管理サブスクリプションは `clickpipes-<パイプ ID>` という名前で、トピックと同じプロジェクトに自動で作られます。
+  保持 7 日、ack 期限 60 秒、順序付けが有効です（[公式資料](https://clickhouse.com/docs/integrations/clickpipes/pubsub/overview)）。
+  有効期限は 31 日に設定されていて、使われないまま 31 日たつと失効します（設定値を確認、失効そのものは未確認。[Pub/Sub の既定の有効期限](https://cloud.google.com/pubsub/docs/subscription-properties)）。
+  パイプを削除すると消え、停止しただけでは残ります。
+  （確認済み）
+- 管理サブスクリプションの未処理のメッセージは、公開から 1 日以内なら保管料がかかりません。
+  取り込みが 1 日を超えて止まると、滞留に保管料がかかり始めます。
+  （公式資料：[保管料](https://cloud.google.com/pubsub/pricing#storage_costs)）
+- パイプは約 5 秒ごとに INSERT します。
+  公開から格納までは中央値 3 秒前後、p99 で約 5 秒でした。
+  （確認済み）
+- レプリカは既定の 1 つ（最小サイズ）から始め、遅延を測りながらレプリカ数とサイズを増やします。
+  （公式資料、量に応じた値は PoC で確認）
 
 **認証とネットワーク**
 
-- ClickPipes にはサービスアカウントの鍵ファイルを渡します。認証の方法は鍵ファイルだけです。公式の最小権限ロール（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）をプロジェクト単位で付け（`terraform/gcp.tf`）、鍵の保管とローテーションの担当を決めます。
-- このロールは、プロジェクト内のトピックの一覧と、購読の作成、受信、削除を許します。ClickPipes は管理サブスクリプションのほかに、確認用の一時的な購読（`clickpipes-discovery-<uuid>`）も作るためです。範囲を狭めたい場合は、ログの送出専用のプロジェクトにトピックを置きます。
-- Pub/Sub が VPC Service Controls の境界の中にある場合、境界の外にある ClickPipes から読めるかを確かめます。（PoC で確認）
-- ClickHouse Cloud のサービスは、トピックのメッセージが保存されるリージョンと同じリージョンに置きます。リージョンをまたぐと、配信に転送料がかかります。（公式資料：[料金](https://cloud.google.com/pubsub/pricing)）
+- ClickPipes にはサービスアカウントの鍵ファイルを渡します。
+  認証の方法は鍵ファイルだけです。
+  公式の最小権限ロール（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）をプロジェクト単位で付け（`terraform/gcp.tf`）、鍵の保管とローテーションの担当を決めます。
+- このロールは、プロジェクト内のトピックの一覧と、サブスクリプションの作成、受信、削除を許します。
+  ClickPipes は管理サブスクリプションのほかに、確認用の一時的なサブスクリプション（`clickpipes-discovery-<uuid>`）も作るためです。
+  範囲を狭めたい場合は、ログの送出専用のプロジェクトにトピックを置きます。
+- Pub/Sub が VPC Service Controls の境界の中にある場合、境界の外にある ClickPipes から読めるかを確かめます。
+  （PoC で確認）
+- ClickHouse Cloud のサービスは、トピックのメッセージが保存されるリージョンと同じリージョンに置きます。
+  リージョンをまたぐと、配信に転送料がかかります。
+  （公式資料：[料金](https://cloud.google.com/pubsub/pricing)）
 
 ### テーブル定義
 
 列と設定の正本は `sql/` の DDL です。
-ここでは役割ごとにまとめます。
 
 **L0 `gcl_landing_v1`**（`sql/10_landing_v1.sql`）
 
@@ -296,20 +352,28 @@ L2 の例は `sql/examples/` にあります（`audit_events_v1` は操作者の
 
 ### L0：着地テーブル
 
-- 列は `_message_id`、`_publish_time`、`_attributes`、`_raw_message` だけです。MergeTree で、公開日でパーティションを分け、保持期限（TTL）を公開から 7 日にします。
+- 列は `_message_id`、`_publish_time`、`_attributes`、`_raw_message` だけです。
+  MergeTree で、公開日でパーティションを分け、保持期限（TTL）を公開から 7 日にします。
 - 保持日数は、取り込みの遅延、切り替えとバックフィル、照合とロールバックに必要な日数に余裕を加えて決めます。
-- L0 には再配信の重複が別の行として残ります。L0 から作り直すときは `LIMIT 1 BY _message_id` を挟みます。
-- Null エンジンにもできますが、そうすると L0 を使う仕組みがすべて使えなくなります。処理が停滞したバッチの監視、解析を直した後の作り直し、L2 のバックフィル、ノイズの除外条件の取り消しです。既定は MergeTree とします。
+- L0 には再配信の重複が別の行として残ります。
+  L0 から作り直すときは `LIMIT 1 BY _message_id` を挟みます。
+- Null エンジンにもできますが、そうすると L0 を使う仕組みがすべて使えなくなります。
+  処理が停滞したバッチの監視、解析を直した後の作り直し、L2 のバックフィル、ノイズの除外条件の取り消しです。
+  既定は MergeTree とします。
 
 ### L1：解析と検索用テーブル
 
-LogEntry を `JSONExtract(_raw_message, 'Tuple(...)')` で 1 回だけ解析し、名前付き Tuple から各列を取り出します。
-項目ごとに JSONExtract を呼ぶ方式と比べ、CPU は約 1/2.7 でした。（確認済み）
+LogEntry の共通項目は `JSONExtract(_raw_message, 'Tuple(...)')` でまとめて解析し、名前付き Tuple から各列を取り出します。
+このほか、1 行ごとに `isValidJSON`（`ParseOk` 列）と `JSONExtractKeys`（列にない項目を見つける）でも本文を読みます。
+項目ごとに JSONExtract を呼ぶ方式と比べ、CPU は約 1/2.7 でした。
+（確認済み）
 
 **時刻**
 
-- `Timestamp` は LogEntry の `timestamp` です。ない行は `_publish_time` で補います。
-- Cloud Logging は 24 時間先までの未来の時刻と、バケットの保持期間内の過去の時刻を受け付けるので（[ルーティングの概要](https://cloud.google.com/logging/docs/routing/overview)）、`Timestamp` は到着順に並びません。遅れて届いたログは過去の日付のパーティションに入ります。
+- `Timestamp` は LogEntry の `timestamp` です。
+  ない行は `_publish_time` で補います。
+- Cloud Logging は 24 時間先までの未来の時刻と、バケットの保持期間内の過去の時刻を受け付けるので（[ルーティングの概要](https://cloud.google.com/logging/docs/routing/overview)）、`Timestamp` は到着順に並びません。
+  遅れて届いたログは過去の日付のパーティションに入ります。
 - `ReceiveTimestamp`（Cloud Logging の受信時刻）と `PublishTime`（Pub/Sub の公開時刻）も持ちます。
 
 **ServiceName**
@@ -335,7 +399,8 @@ LogEntry を `JSONExtract(_raw_message, 'Tuple(...)')` で 1 回だけ解析し�
 6. 監査ログ以外の protoPayload は「[型名] 先頭部分」
 7. どれもなければ「[ログ ID]」
 
-本文と ServiceName には、どの種類のログでも空でない値が設定されます。（確認済み）
+本文と ServiceName は、検証した種類のログ（監査ログ、GKE、Compute Engine、App Engine、ロードバランサ風、ペイロードなしなど）では空になりませんでした。
+（確認済み）
 
 **属性の名前の付け方**
 
@@ -350,10 +415,20 @@ LogEntry を `JSONExtract(_raw_message, 'Tuple(...)')` で 1 回だけ解析し�
 | LogAttributes の `http.*`、`operation.*` | 列にしていない httpRequest（responseSize、referer、protocol、cacheHit など）と operation（first、last）の項目 |
 | LogAttributes の `proto.type` | protoPayload の型（`@type`） |
 
-- `key="value"` の分解は、本文に `="` を含むすべての行に適用されます。意図しないキーが増える可能性があるので、対象を特定の ServiceName に絞ることを検討します。
-- 属性は Map 型にします。ClickStack の公式の推奨で、JSON 型は ClickStack ではベータであり、キーが少なく安定している場合向けとされています。（公式資料：[Map と JSON](https://clickhouse.com/docs/clickstack/ingesting-data/schema/map-vs-json)）
-- jsonPayload に新しいキーを追加し続けるアプリでは、LogAttributes のキーが増え続けます。Map の保存形式は、マージ後の部分だけ `with_buckets`（キーごとに分けて保存）にします。1 行あたりのキーの平均が 32 個未満の部分は分割されず、従来の形式と同じになります。キーが増えた部分だけが、マージ時に自動で分割されます。（確認済み）
-- 強制的に分割すると、1 つのキーを読むクエリは速くなりますが、Map 全体を読むクエリと INSERT は遅くなり、保存量も増えます。平均 2〜12 個のキーのログでは、1 つのキーを読むクエリが 2〜3 割速く、Map 全体を読むクエリが 2.4 倍遅くなりました。平均が 32 個を超えるまでは強制しません。（確認済み）
+- `key="value"` の分解は、本文に `="` を含むすべての行に適用されます。
+  意図しないキーが増える可能性があるので、対象を特定の ServiceName に絞ることを検討します。
+- 属性は Map 型にします。
+  ClickStack の公式の推奨で、JSON 型は ClickStack ではベータであり、キーが少なく安定している場合向けとされています。
+  （公式資料：[Map と JSON](https://clickhouse.com/docs/clickstack/ingesting-data/schema/map-vs-json)）
+- jsonPayload に新しいキーを追加し続けるアプリでは、LogAttributes のキーが増え続けます。
+  Map の保存形式は、マージ後のパートだけ `with_buckets`（キーごとに分けて保存）にします。
+  1 行あたりのキーの平均が 32 個未満のパートは分割されず、従来の形式と同じになります。
+  キーが増えたパートだけが、マージ時に自動で分割されます。
+  （確認済み）
+- 強制的に分割すると、1 つのキーを読むクエリは速くなりますが、Map 全体を読むクエリと INSERT は遅くなり、保存量も増えます。
+  平均 2〜12 個のキーのログでは、1 つのキーを読むクエリが 2〜3 割速く、Map 全体を読むクエリが 2.4 倍遅くなりました。
+  平均が 32 個を超えるまでは強制しません。
+  （確認済み）
 - よく絞り込むキーは、独立した列として保存することもできます。
 
 **重大度と解析の状態**
@@ -365,7 +440,9 @@ LogEntry を `JSONExtract(_raw_message, 'Tuple(...)')` で 1 回だけ解析し�
 
 どの列も Nullable にしていません。
 値がないときは、型ごとの既定値が設定されます。
-ClickHouse は、NULL を識別する情報を別途保持するため処理が遅くなるとして Nullable を避けるよう勧めており、ClickStack の既定スキーマも Nullable を使っていません。（確認済み）
+ClickHouse は、NULL を識別する情報を別に持つため処理が遅くなるとして、Nullable を避けるよう勧めています。
+ClickStack の既定スキーマも Nullable を使っていません。
+（公式資料：[Nullable を避ける](https://clickhouse.com/docs/best-practices/select-data-types#avoid-nullable-columns)）
 
 | LogEntry の値 | String の列 | 数値の列 | Bool の列 | 属性（Map） |
 |---|---|---|---|---|
@@ -374,9 +451,11 @@ ClickHouse は、NULL を識別する情報を別途保持するため処理が�
 | 型が違う（数値が文字列 `"200"` など） | 文字列に変換される | 数値に変換される | `"true"` は `false` | 文字列に変換される |
 | 時刻がない、読めない | 1970 年 | ― | ― | ― |
 
-- 列では「値がない」と「0、空、false」を区別できません。例えば HTTP の値を集計するときは、`HttpMethod != ''` などで HTTP のログに絞ります。
+- 列では「値がない」と「0、空、false」を区別できません。
+  例えば HTTP の値を集計するときは、`HttpMethod != ''` などで HTTP のログに絞ります。
 - `Timestamp` は、読めなければ公開時刻で補うので 1970 年にはなりません。
-- 属性では `mapContains(LogAttributes, 'キー')` で、そのキーがあるかを見分けられます。監査ログ、`entry.*`、`http.*` の属性は、空の値を入れません。
+- 属性では `mapContains(LogAttributes, 'キー')` で、そのキーがあるかを見分けられます。
+  監査ログ、`entry.*`、`http.*` の属性は、空の値を入れません。
 - 属性の値を数値として使うときは、検索時に `toFloat64OrNull(LogAttributes['キー'])` のように変換すると、変換できない値を NULL として扱えます。
 
 **ノイズの対処**
@@ -390,29 +469,35 @@ ClickHouse は、NULL を識別する情報を別途保持するため処理が�
 | Pub/Sub へのシンクのフィルタで除外する（Terraform の `sink_exclusions`） | Cloud Logging 側にも残り（`_Required` 行きなど）、量が多く、ClickHouse で検索しないもの | Pub/Sub の料金も減る。件数は ClickHouse から見えなくなる |
 
 例：GKE では、コントローラーのリーダー選出とノードの生存通知のために、Kubernetes の Lease の更新（`io.k8s.coordination.v1.leases.update`）が数秒ごとに監査ログとして出ます。
-検証環境では件数の上位を占めたので、MV で L1 から外し、件数だけを残しました。（確認済み）
-同じ条件を MV1 とノイズ用 MV の両方に書くので、片方だけを修正すると、除外件数と集計件数が一致しなくなります。
+検証環境では件数の上位を占めたので、MV で L1 から外し、件数だけを残しました。
+（確認済み）
+同じ条件を MV1 とノイズの集計 MV の両方に書くので、片方だけを修正すると、除外件数と集計件数が一致しなくなります。
 L2 も L0 から読むので、同じ条件を書きます（`sql/examples/l2_audit_events_v1.sql`）。
 
 **検索用テーブルと全文検索**
 
 - 列名は ClickStack の OTel ログ形式に合わせます（Timestamp、ServiceName、SeverityText、Body、LogAttributes、ResourceAttributes など）。
-- 日付でパーティションを分け、並び順は `(toStartOfFiveMinutes(Timestamp), ServiceName, Timestamp)` にします。ClickStack の既定と同じです。
+- 日付でパーティションを分け、並び順は `(toStartOfFiveMinutes(Timestamp), ServiceName, Timestamp)` にします。
+  ClickStack の既定と同じです。
 - ログの種類ごとに保持期間を変えたい場合（監査ログは長く、アプリのログは短く）は、テーブルを分けるか、行ごとの TTL を使います。
-- 1 回の INSERT の 1 ブロックがまたげるパーティションは、既定で 100 までです。超えると INSERT が失敗します（[max_partitions_per_insert_block](https://clickhouse.com/docs/reference/settings/session-settings/max-partitions)）。遅れて届くログが多い環境では、取り込みの失敗を監視します。
+- 1 回の INSERT の 1 ブロックがまたげるパーティションは、既定で 100 までです。
+  超えると INSERT が失敗します（[max_partitions_per_insert_block](https://clickhouse.com/docs/reference/settings/session-settings/max-partitions)）。
+  遅れて届くログが多い環境では、取り込みの失敗を監視します。
 
 **日本語の検索**
 
 ClickStack は、検索窓に入れた語を `hasAllTokens(lower(Body), lower('語'))` に変換し、`lower(Body)` のテキストインデックスを使います。
 検索の経路によっては `hasToken` を出すこともあります。
-2 文字ずつのインデックスは、ClickHouse Cloud 26.6 ではどちらの形でも使われましたが、版によっては `hasAllTokens` でしか使われないことがあります。
-使う版で EXPLAIN を確かめます（`verify/checks.sql` の 7 番）。（確認済み）
+2 文字ずつのインデックスは、ClickHouse Cloud 26.6 ではどちらの形でも使われましたが、clickhouse local 26.7 では `hasAllTokens` でしか使われませんでした。
+（確認済み）
+使う版で EXPLAIN を確かめます（`verify/checks.sql` の 7 番）。
 
 インデックスの区切り方を単語単位（`splitByNonAlpha`）にすると、日本語の文はまるごと 1 つの語になります。
 そのため日本語の語で検索すると、エラーにならずに 0 件になります。
 2 文字ずつの区切り（`ngrams(2)`）なら検索できます。
 
-合成ログ約 110 万行での例です。（確認済み）
+合成ログ約 110 万行での例です。
+（確認済み）
 
 | lower(Body) の区切り方 | 「タイムアウト」の件数 | 「timeout」の件数 | インデックスのサイズ |
 |---|---|---|---|
@@ -420,16 +505,26 @@ ClickStack は、検索窓に入れた語を `hasAllTokens(lower(Body), lower('�
 | 2 文字ずつ（ngrams(2)） | 92,517 件 | 70,311 件 | 15.1 MiB |
 | 参考：LIKE で数えた件数 | 92,517 件 | 70,311 件 | ― |
 
-- 日本語のログがある環境では、`lower(Body)` のインデックスを `ngrams(2)` にします。英語の語も同じ件数で検索できます。インデックスは単語単位の区切りの約 4.5 倍になります。
+- 日本語のログがある環境では、`lower(Body)` のインデックスを `ngrams(2)` にします。
+  英語の語も同じ件数で検索できます。
+  インデックスの容量は、単語単位の区切りの約 4.5 倍になります。
 - 1 つの式に付けられるテキストインデックスは 1 つまでなので、両方の区切り方を同時には使えません。
-- 1 文字だけの語は検索できません。1 文字で探すときは SQL の LIKE を使います。
-- 2 文字ずつの断片がすべて含まれていれば一致とみなすので、別の並びの文字列にも一致します。例えば「ムアウトタイム」を含む本文も「タイムアウト」に一致します。件数を厳密に数えるときは、LIKE で確かめます。（確認済み）
-- インデックスを使わずに実行すると（`use_skip_indexes = 0` を指定した場合など）、日本語の語は一致せず 0 件になりました（clickhouse local 26.7）。（確認済み）
-- 属性のインデックスは、ClickStack の既定スキーマと同じく、キーの一覧（`mapKeys`）と「キー=値」の組（`LogAttributeItems` などの ALIAS 列）に付けます。この列があると、ClickStack は属性の絞り込みを `has(LogAttributeItems, 'キー=値')` に変換し、このインデックスが使われます。（確認済み）
+- 1 文字だけの語は検索できません。
+  1 文字で探すときは SQL の LIKE を使います。
+- 2 文字ずつの断片がすべて含まれていれば一致とみなすので、別の並びの文字列にも一致します。
+  例えば「ムアウトタイム」を含む本文も「タイムアウト」に一致します。
+  件数を厳密に数えるときは、LIKE で確かめます。
+  （確認済み）
+- インデックスを使わずに実行すると（`use_skip_indexes = 0` を指定した場合など）、日本語の語は一致せず 0 件になりました（clickhouse local 26.7）。
+  （確認済み）
+- 属性のインデックスは、ClickStack の既定スキーマと同じく、キーの一覧（`mapKeys`）と「キー=値」の組（`LogAttributeItems` などの ALIAS 列）に付けます。
+  この列があると、ClickStack は属性の絞り込みを `has(LogAttributeItems, 'キー=値')` に変換し、このインデックスが使われます。
+  （確認済み）
 
 ### L3：集計テーブル
 
-- 分単位の件数（ServiceName、重大度、HTTP ステータス別）を L1 から MV で作ります。L1 にパーティション操作（REPLACE/MOVE PARTITION）をしたときは自動で更新されないので、同じ日を作り直します。
+- 分単位の件数（ServiceName、重大度、HTTP ステータス別）を L1 から MV で作ります。
+  L1 にパーティション操作（REPLACE/MOVE PARTITION）をしたときは自動で更新されないので、同じ日を作り直します。
 - ノイズの除外条件で除いたログの分単位の件数（規則名、サービス名、操作者別）を、L0 から直接作ります。
 
 ### L2：型付きテーブル
@@ -437,21 +532,27 @@ ClickStack は、検索窓に入れた語を `hasAllTokens(lower(Body), lower('�
 L2 は任意です。
 例は `sql/examples/` にあります。
 
-- `sql/examples/l2_audit_events_v1.sql`：監査ログを操作者の順に並べた表。「操作者で頻繁に絞るのに、L1 の並び順では読み取り量が減らない」という判断基準に対応します。ハンズオンで使います。
+- `sql/examples/l2_audit_events_v1.sql`：監査ログを操作者の順に並べた表。
+  「操作者で頻繁に絞るのに、L1 の並び順では読み取り量が減らない」という判断基準に対応します。
+  ハンズオンで使います。
 - `sql/examples/l2_gke_upgrades_v1.sql`：GKE のアップグレード通知を、ノードプール、状態、版、開始・終了時刻の列にした表。
 
 ### 重複の扱い
 
 - 重複には、Pub/Sub の再配信（同じ `MessageId`）と、同じログの二重送出（同じ `InsertId` と `Timestamp`）があります。
-- L1 には重複を残し、件数を正確に数えたい集計だけ、クエリで `MessageId` ごとに 1 件にします。ClickStack の件数グラフは重複を含んだまま数えます。
-- 平常時の重複はごく少なく、パイプの一時停止や障害の後に増えます。`verify/checks.sql` の 3 番で確かめます。
+- L1 には重複を残し、件数を正確に数えたい集計だけ、クエリで `MessageId` ごとに 1 件にします。
+  ClickStack の件数グラフは重複を含んだまま数えます。
+- 平常時の重複はごく少なく、パイプの一時停止や障害の後に増えます。
+  `verify/checks.sql` の 3 番で確かめます。
 
 ### 個人情報、権限、本番の構成、監視
 
 **個人情報と権限**
 
-- L1 には個人を特定できる値が入ります。監査ログの `audit.principalEmail`（操作者のメールアドレス）と `audit.callerIp`（呼び出し元 IP）、アプリが本文や jsonPayload に出した値です。
-- 誰が何を見られるかを、チームや用途ごとに決めます。ClickHouse の行ポリシーで、`ProjectId` や名前空間ごとに見える行を分けられます。
+- L1 には個人を特定できる値が入ります。
+  監査ログの `audit.principalEmail`（操作者のメールアドレス）と `audit.callerIp`（呼び出し元 IP）、アプリが本文や jsonPayload に出した値です。
+- 誰が何を見られるかを、チームや用途ごとに決めます。
+  ClickHouse の行ポリシーで、`ProjectId` や名前空間ごとに見える行を分けられます。
 - 列の値を伏せたい場合は、取り込み時に MV で除外するかハッシュ化します。
 - 検索の負荷を抑えるため、ClickStack の利用者に検索のタイムアウトやクォータを設定します。
 - 保持期間（TTL）は、個人情報の扱いの規程と合わせて決めます。
@@ -460,8 +561,11 @@ L2 は任意です。
 
 - サービスは 2 レプリカ以上にし、アイドル時の自動停止を無効にします（取り込みは常時続くため）。
 - ClickPipes のレプリカ数とサイズは、取り込み量と遅延を測って決めます。
-- 取り込みと ClickStack の検索のコンピュートを分けて、互いに干渉しないようにする構成も取れます。大きなバックフィルも、検索とは別のコンピュートで実行します。（PoC で確認）
-- バックアップは、長期間のログでは保管料と同等以上の費用になりうるので、頻度と世代を要件から決めます。L0 と Cloud Logging の `_Required` で再現できる範囲は、バックアップの対象から外せるか検討します。
+- 取り込みと ClickStack の検索のコンピュートを分けて、互いに干渉しないようにする構成も取れます。
+  大きなバックフィルも、検索とは別のコンピュートで実行します。
+  （PoC で確認）
+- バックアップは、長期間のログでは保管料と同等以上の費用になりうるので、頻度と世代を要件から決めます。
+  L0 と Cloud Logging の `_Required` で再現できる範囲は、バックアップの対象から外せるか検討します。
 
 **監視**
 
@@ -473,5 +577,5 @@ L2 は任意です。
 | 取り込みの遅れ | `_publish_time` から格納までの p99（`verify/checks.sql` の 1 番） | パイプの処理能力の不足 |
 | シンクの送出エラー | Cloud Monitoring の `logging.googleapis.com/exports/error_count` | シンクの権限やトピックの問題 |
 
-MV のエラーは、放置すると約 60 分でパイプが止まります。
+検証では、MV のエラーを放置すると約 60 分でパイプが止まりました。
 このため、L0 と L1 の差と失敗した INSERT には通知を付けます。

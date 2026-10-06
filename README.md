@@ -6,7 +6,7 @@ A sample for ingesting Google Cloud Logging logs into ClickHouse Cloud through a
 It contains the table design, Terraform, SQL, a synthetic log generator, and operating procedures.
 Materialized views (MVs) parse and shape the ingested logs.
 
-The behavior described here was observed on real services.
+The main behavior described here was observed on real services; untested items are listed at the end of the findings.
 Dates, versions, conditions, and numbers are in the [findings](docs/en/findings.md).
 Pub/Sub ClickPipes was in Private Preview at the time of testing (2026-10).
 Behavior may change, so repeat the checks in the [hands-on](docs/en/hands-on.md) before adopting it.

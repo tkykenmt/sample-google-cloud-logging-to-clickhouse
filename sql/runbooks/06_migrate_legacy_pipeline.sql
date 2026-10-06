@@ -1,5 +1,8 @@
 -- Runbook 06: move an existing pipeline whose landing table has no _message_id / _publish_time
 -- (e.g. only _raw_message) onto this layout, without stopping it.
+-- {{LEGACY_TABLE}} needs a logName column and a {{LEGACY_TS}} column next to _raw_message; with only
+-- _raw_message, replace logName by JSONExtractString(_raw_message, 'logName') and {{LEGACY_TS}} by the parsed
+-- timestamp throughout.
 -- {{LEGACY_TABLE}} = the old landing table (e.g. default.logs_landing), {{LEGACY_TS}} = its column holding the
 -- LogEntry timestamp (used for chunking; any column that bounds the rows works).
 -- Without _publish_time there is no exact boundary, so the cutover uses the LogEntry identity
@@ -41,6 +44,9 @@ FROM
 );
 
 -- Step 3: fill [X, T_new + 10 min) from the old table, skipping entries the new pipe already wrote.
+--   Noise counts for [X, T_new) come from neither Step 2 nor the new pipe: count them from the old table
+--   for that range as in Step 2 (rows the new pipe already delivered are in the new L0 and were counted there;
+--   skip them with the same identity check).
 INSERT INTO gcl.gcl_logs_v1
 SELECT /* L1 columns in table order */ *
 FROM
@@ -61,7 +67,8 @@ FROM
     SELECT toStartOfHour(parseDateTime64BestEffortOrZero(JSONExtractString(_raw_message, 'receiveTimestamp'), 3, 'UTC')) AS h,
            uniqExact(logName, JSONExtractString(_raw_message, 'insertId'), {{LEGACY_TS}}) AS o
     FROM {{LEGACY_TABLE}}
-    WHERE {{LEGACY_TS}} >= '{{DAY}}' AND parseDateTime64BestEffortOrZero(JSONExtractString(_raw_message, 'receiveTimestamp'), 3, 'UTC') < now() - INTERVAL 5 MINUTE
+    WHERE {{LEGACY_TS}} >= '{{DAY}}' AND {{LEGACY_TS}} < toDate('{{DAY}}') + 1
+      AND parseDateTime64BestEffortOrZero(JSONExtractString(_raw_message, 'receiveTimestamp'), 3, 'UTC') < now() - INTERVAL 5 MINUTE
       -- L1 holds no noise rows: leave them out here too (same condition as verify/checks.sql 2).
       AND JSONExtractString(_raw_message, 'protoPayload', 'methodName') != 'io.k8s.coordination.v1.leases.update'
     GROUP BY h
@@ -70,7 +77,7 @@ FULL OUTER JOIN
 (
     SELECT toStartOfHour(ReceiveTimestamp) AS h, uniqExact(LogName, InsertId, Timestamp) AS n
     FROM gcl.gcl_logs_v1
-    WHERE Timestamp >= '{{DAY}}' AND ReceiveTimestamp < now() - INTERVAL 5 MINUTE
+    WHERE Timestamp >= '{{DAY}}' AND Timestamp < toDate('{{DAY}}') + 1 AND ReceiveTimestamp < now() - INTERVAL 5 MINUTE
     GROUP BY h
 ) AS b USING (h)
 ORDER BY h;

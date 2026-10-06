@@ -84,7 +84,7 @@ It was granted automatically in testing.
 ## 4. Create the custom role for ClickPipes
 
 Open "Create role" under Roles in IAM & Admin and enter the Title, Description and ID.
-"Add permissions" and add these seven (the official least-privilege role, [Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)):
+"Add permissions" and add these (the official least-privilege role, [Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)):
 
 - `pubsub.topics.list`
 - `pubsub.topics.get`
@@ -198,6 +198,7 @@ Set Default Select and the fields under "Configure Optional Fields" as follows (
 | Span Id Expression | `SpanId` |
 | Implicit Column Expression | `Body` |
 | Use Text Index | Auto (default) |
+| Highlighted Attributes (optional) | `ResourceType` (alias `type`), `LogId` (`log`), `ProjectId` (`project`) |
 
 "Add Setting" adds per-source query settings, which this configuration does not use.
 If it left empty rows, delete them with the trash button before saving.

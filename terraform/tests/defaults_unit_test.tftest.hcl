@@ -139,3 +139,24 @@ run "rejects_project_number" {
 
   expect_failures = [var.gcp_project_id]
 }
+
+run "rejects_domain_scoped_project" {
+  command = plan
+
+  variables {
+    gcp_project_id = "example.com:my-project"
+  }
+
+  expect_failures = [var.gcp_project_id]
+}
+
+run "rejects_non_rfc3339_seek_timestamp" {
+  command = plan
+
+  variables {
+    pipe_seek_type      = "timestamp"
+    pipe_seek_timestamp = "2026-10-05 00:00:00"
+  }
+
+  expect_failures = [var.pipe_seek_timestamp]
+}

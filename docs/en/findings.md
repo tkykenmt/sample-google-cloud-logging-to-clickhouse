@@ -2,7 +2,7 @@
 
 English | [日本語](../ja/findings.md)
 
-Results observed on ClickHouse Cloud and Google Cloud test environments on 2026-10-01 and 02.
+Results observed on ClickHouse Cloud and Google Cloud test environments from 2026-10-01 to 05.
 Pub/Sub ClickPipes is in Private Preview and ClickHouse Cloud upgrades automatically, so the behavior described here may change.
 
 ## Environment
@@ -47,7 +47,7 @@ The MV `SQL SECURITY` mode and the permissions the pipe user needs were tested w
 When the MV without a SQL SECURITY clause lacked permissions, rows were written to the source table but not past the MV.
 
 The user of a pipe created with `clickhousectl` has `default_role`, so it never lacked permissions.
-When choosing "Only destination table" in the UI, create the MVs with a DEFINER.
+When choosing "Only destination" in the UI, create the MVs with a DEFINER.
 
 ## When an MV throws
 
@@ -152,7 +152,7 @@ Storage (compressed, per row):
 | Main table | 54 bytes (audit logs only, ORDER BY (serviceName, principalEmail, timestamp)) | 86 bytes (including about 13% for text indexes) |
 
 The main table grew mostly because of `OperationId`, which is a unique UUID per event in k8s.io audit logs (22% of the columns), the raw `ProtoPayload` (25%), and the attribute text indexes.
-To cut long-term storage, dropping unneeded logs such as Lease updates with a sink exclusion filter is the most effective.
+Dropping unneeded logs such as Lease updates with a sink exclusion filter cuts long-term storage substantially.
 
 ## Japanese full-text search
 
@@ -267,7 +267,7 @@ A table of GKE upgrade notifications (node pool, versions, count, failures, aver
 `hasToken(lower(Body), 'timeout')` used `idx_lower_body`.
 The plan was the same through the stable view (`gcl.logs`).
 
-## Deployment procedures (Terraform and cli/deploy.sh, 2026-10-02)
+## Deployment procedures (Terraform and gcloud/clickhousectl, 2026-10-02)
 
 Both procedures were run from creation to removal on a test project and service.
 `cli/deploy.sh` and `cli/destroy.sh` were later removed from the repository; the same commands are in part 3 of the [Hands-on](hands-on.md).
@@ -335,6 +335,20 @@ The boundary handling and rows older than the L0 TTL were checked on clickhouse 
 - 3,000 synthetic entries with the boundary in the middle of the receive times: the part after it was inserted as the pipe would, the rest with Steps 3 and 4 of the runbook. L1 (2,364) plus the noise counts (636) made 3,000, with 0 duplicate LogEntry identities. Without the L0 check of Step 4, 319 rows were duplicated in L1 and the noise counts grew by 81.
 - 10 rows dated 20 days ago in a table set up like L0 (7-day TTL, `ttl_only_drop_parts = 1`): 10 right after the insert, 0 after 3 s; they stayed with background merges stopped. The MVs run on the INSERT, so L1 got them.
 - On Cloud 26.6 with the same table and an MV, `system.part_log` showed a `TTLDropMerge` 0.1 s after the inserted part (10 rows), and the MV target had all 10 rows.
+
+## Final check (2026-10-06)
+
+After the final-review fixes, the Terraform steps of [Setup](setup.md) and part 2 of the hands-on were run against a Tokyo service with `topic_storage_regions = ["asia-northeast1"]`.
+
+| Step | Result |
+|---|---|
+| `terraform apply` | About 69 seconds, 10 resources, pipe Running |
+| 3,000 synthetic messages (20% Lease updates, 1% repeated content) | No loss in L0. L0 3,050 = L1 2,428 + noise counts 622, L3 total = L1. `MessageId` duplicates (Pub/Sub redeliveries): 50 in L0, 45 in L1 |
+| Adding the L2 (with the wait for T) | The wait ended 3 seconds after T. Distinct `MessageId`s were 668 in both the L2 and the L1 audit logs; L1 had 6 more rows, all redeliveries |
+| Adding the L3 | L3 total and L1 row count both 8,405 |
+| `verify/checks.sql` | 0 stuck batches, 0 failed inserts |
+| `terraform destroy` | Waited 24 seconds for the managed subscription to go, then removed the key and binding. Nothing was left |
+| `tools/chq.py`, `verify/completeness.sh` | Run from the top of the repository; `clickhousectl` used the API key from the environment |
 
 ## Not tested
 
