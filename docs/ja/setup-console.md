@@ -73,9 +73,14 @@ Logging の Log router で「Create sink」を開きます。
 ![シンクのフィルタ](../images/console/03b_sink_filter.png)
 
 シンクは、作成した時点からプロジェクトの全ログをトピックへ送ります。
-同じプロジェクトのトピックを選んだ場合、シンクの書き込み用 ID へのトピックの公開権限（Pub/Sub Publisher）は、画面が自動で付けました。
-トピックの「Permissions」に `service-<project-number>@gcp-sa-logging.iam.gserviceaccount.com` が Pub/Sub Publisher として表示されていることを確かめます。
-別のプロジェクトのトピックを選んだ場合は、この権限を手で付けます。
+シンクは、書き込み用 ID（writer identity）でトピックに公開します。
+書き込み用 ID は、Cloud Logging がプロジェクトごとに 1 つ作るサービスアカウントで、同じプロジェクトのシンクで共有されます（`service-<プロジェクト番号>@gcp-sa-logging.iam.gserviceaccount.com` の形。組織やフォルダの集約シンクでは、その組織やフォルダのもの）。
+画面でシンクを作り、作った人がトピックのオーナー権限を持っている場合は、Cloud Logging がトピックの公開権限（Pub/Sub Publisher）をこの ID に付けます（[公式資料](https://cloud.google.com/logging/docs/export/configure_export_v2#dest-auth)）。
+検証でも自動で付きました。
+
+1. Log router でシンクのメニューから「View sink details」を開き、「Writer identity」を控える。
+2. トピックの「Permissions」に、その ID が Pub/Sub Publisher として表示されていることを確かめる。
+3. 表示されていなければ（オーナー権限がない、トピックが別のプロジェクトにあるなど）、トピックの「Permissions」から、その ID に Pub/Sub Publisher を付ける。権限を付けるまでの間、シンクは公開に失敗し、その分のログはトピックに届きません。
 
 ## 4. ClickPipes 用のカスタムロールを作る
 

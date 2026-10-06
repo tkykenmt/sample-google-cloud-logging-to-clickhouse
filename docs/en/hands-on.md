@@ -259,7 +259,8 @@ gcloud pubsub topics add-iam-policy-binding $TOPIC --project $P --member="$W" --
 ```
 
 From the moment it is created, the sink sends every log of the project to the topic.
-A sink publishes as its own writer identity (`writerIdentity`), so that identity gets publish permission on the topic.
+A sink publishes as its writer identity (`writerIdentity`), so that identity gets publish permission on the topic.
+The writer identity is a service account Cloud Logging creates once per project and shares among its sinks (`service-<project-number>@gcp-sa-logging.iam.gserviceaccount.com`).
 Until it has it, the sink fails to publish and those logs never reach the topic.
 
 ### 3-4. Role, service account and key for ClickPipes

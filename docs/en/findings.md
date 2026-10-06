@@ -306,7 +306,7 @@ The sink filter was replaced with one that matches no real logs after the screen
 | Step | Result |
 |---|---|
 | Topic | "Add a default subscription" was checked by default on the create page. Message storage could be restricted to `asia-northeast1` under Storage policy in the info panel of the edit page |
-| Sink | With a topic in the same project, publish permission on the topic (`roles/pubsub.publisher`) was granted to the sink's writer identity automatically |
+| Sink | Created in the console by an account with Owner access to the topic, the sink's writer identity (the project-wide `service-<project-number>@gcp-sa-logging.iam.gserviceaccount.com`) got publish permission on the topic (`roles/pubsub.publisher`) automatically |
 | Custom role | The permission picker's filter accumulates conditions; the seven permissions were selected one at a time, removing the filter in between. The API showed all seven |
 | SQL console | `sql/10` to `50` pasted into one query ran together with Run, creating four tables and three MVs |
 | ClickPipe | "GCP Pub/Sub" was labelled Beta in the source list. With the existing L0 selected, the four virtual columns were mapped to the columns of the same names automatically and the JSON fields stayed unmapped. A sample fetch was required before the next step |
