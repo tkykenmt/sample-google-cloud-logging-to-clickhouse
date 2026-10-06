@@ -306,7 +306,7 @@ GCP の東京リージョン（`asia-northeast1`）に `clickhousectl cloud serv
 | 手順 | 結果 |
 |---|---|
 | トピック | 作成画面では「Add a default subscription」が既定でオンだった。保存先のリージョンは、作成後の編集画面の情報パネル（Storage policy）で `asia-northeast1` に限定できた |
-| シンク | 同じプロジェクトのトピックを選ぶと、シンクの書き込み用 ID へのトピックの公開権限（`roles/pubsub.publisher`）が自動で付いた |
+| シンク | トピックのオーナー権限を持つアカウントで画面から作ると、シンクの書き込み用 ID（プロジェクトで共有の `service-<プロジェクト番号>@gcp-sa-logging.iam.gserviceaccount.com`）にトピックの公開権限（`roles/pubsub.publisher`）が自動で付いた |
 | カスタムロール | 権限を選ぶ画面のフィルタは条件が積み重なり、1 つずつ外しながら 7 つを選んだ。API で 7 つの権限を確認した |
 | SQL コンソール | `sql/10`〜`50` を 1 つのクエリに貼り、Run でまとめて実行できた。テーブル 4 つと MV 3 つができた |
 | ClickPipe | 取り込み元の一覧では「GCP Pub/Sub」に Beta と表示された。既存の L0 を選ぶと、仮想列 4 つが同じ名前の列に自動で対応付けられ、JSON の項目は対応付けられなかった。次の段へ進むには見本のメッセージの取得が必要だった |

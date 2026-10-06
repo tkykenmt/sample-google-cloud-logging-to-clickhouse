@@ -260,7 +260,8 @@ gcloud pubsub topics add-iam-policy-binding $TOPIC --project $P --member="$W" --
 ```
 
 シンクは、作成した時点からプロジェクトの全ログをトピックへ送ります。
-シンクはシンクごとの書き込み用 ID（`writerIdentity`）で公開するので、その ID にトピックへの公開権限を付けます。
+シンクは書き込み用 ID（`writerIdentity`）で公開するので、その ID にトピックへの公開権限を付けます。
+書き込み用 ID は、Cloud Logging がプロジェクトごとに 1 つ作り、同じプロジェクトのシンクで共有するサービスアカウントです（`service-<プロジェクト番号>@gcp-sa-logging.iam.gserviceaccount.com`）。
 権限を付けるまでの間、シンクは公開に失敗し、その分のログはトピックに届きません。
 
 ### 3-4. ClickPipes 用のロール、サービスアカウント、鍵

@@ -72,9 +72,14 @@ Open "Create sink" under Log router in Logging.
 ![Sink filter](../images/console/03b_sink_filter.png)
 
 From the moment it is created, the sink sends every log of the project to the topic.
-With a topic in the same project, the console granted publish permission on the topic (Pub/Sub Publisher) to the sink's writer identity automatically.
-Check that the topic's "Permissions" list `service-<project-number>@gcp-sa-logging.iam.gserviceaccount.com` as Pub/Sub Publisher.
-For a topic in another project, grant it yourself.
+The sink publishes to the topic as its writer identity.
+The writer identity is a service account Cloud Logging creates once per project and shares among the project's sinks (of the form `service-<project-number>@gcp-sa-logging.iam.gserviceaccount.com`; for an organization or folder aggregated sink, the organization's or folder's).
+When the sink is created in the console by someone with Owner access to the topic, Cloud Logging grants publish permission on the topic (Pub/Sub Publisher) to that identity ([docs](https://cloud.google.com/logging/docs/export/configure_export_v2#dest-auth)).
+It was granted automatically in testing.
+
+1. In Log router, open "View sink details" from the sink's menu and note the "Writer identity".
+2. Check that the topic's "Permissions" list that identity as Pub/Sub Publisher.
+3. If not (no Owner access, a topic in another project, and so on), grant that identity Pub/Sub Publisher under the topic's "Permissions". Until then the sink fails to publish and those logs never reach the topic.
 
 ## 4. Create the custom role for ClickPipes
 
