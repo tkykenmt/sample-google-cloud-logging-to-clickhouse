@@ -231,6 +231,9 @@ rm -f sent_ids.txt
 
 ## 第 3 部：gcloud と clickhousectl で 1 つずつ作る
 
+この部では鍵ファイルで認証します。
+`clickhousectl` 0.4.2 は Workload Identity のパイプを作れないためです（[運用](operations.md) の「鍵から Workload Identity へ切り替える」）。
+
 第 2 部で Terraform が作ったものを、コマンドで 1 つずつ作ります。
 各手順で、何をなぜ作るのかを確かめます。
 導入には、このコマンドではなく [導入](setup.md) の Terraform を使います。

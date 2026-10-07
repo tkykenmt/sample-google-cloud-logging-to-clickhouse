@@ -163,6 +163,49 @@ Use `EXCHANGE` only for read-only tables not connected to any MV or pipe.
 
 Also avoid dropping and recreating an MV (inserts in between skip it), reusing an MV's SELECT as is in `INSERT ... SELECT` (columns map by position and values shift), and rebuilding from L0 without deduplication (redeliveries return to L1).
 
+## Switching from a key to workload identity
+
+ClickPipes can read Pub/Sub with workload identity (Private Preview) instead of a key file (official docs not yet published, [docs PR](https://github.com/ClickHouse/ClickHouse/pull/122828)).
+You grant permissions to the Google service account ClickPipes manages for the service, and no key has to be created, stored or rotated.
+The feature must be enabled for the organization, and both the ClickHouse Cloud service and ClickPipes must run on GCP.
+
+**For a new deployment**, set `clickpipes_auth = "workload_identity"` in `terraform.tfvars` and apply.
+No service account or key is created; `terraform output clickpipes_service_account` shows the identity that got the role.
+
+**For a running pipe**, only the authentication changes; the pipe is not recreated.
+In testing, the same pipe and managed subscription stayed Running and ingestion did not stop ([Findings](findings.md), "Workload identity").
+
+1. Read the service context (`GET /v1/organizations/<org>/services/<service>/clickpipes/context`): `gcpWorkloadIdentity.supported` and `ready` must be true; `principal` is the ClickPipes service account.
+2. Grant the custom role to `serviceAccount:<principal>` at the project level and wait about a minute.
+3. Send only the authentication to the pipe:
+
+   ```bash
+   curl -u "$KEY_ID:$KEY_SECRET" -X PATCH -H "Content-Type: application/json" \
+     -d '{"source": {"pubsub": {"authentication": "SERVICE_ACCOUNT_WORKLOAD_IDENTITY"}}}' \
+     "https://api.clickhouse.cloud/v1/organizations/$ORG_ID/services/$SERVICE_ID/clickpipes/$PIPE_ID"
+   ```
+
+4. Watch the pipe state and L0 ingestion for a few minutes, then delete the old service account's key and role binding.
+
+Under Terraform, ClickHouse provider v3.35.0 fails when `clickpipes_auth` is changed.
+Its pipe update also sends the unchanged `format`, which the API rejects (`format is immutable for Pub/Sub sources`).
+The old binding and key are also removed before the pipe update, so the pipe cannot read in between (in testing it went Degraded; the messages stayed in the managed subscription and arrived without loss after the switch).
+Until the provider is fixed, switch in this order:
+
+```bash
+cd terraform
+# 1. create only the workload identity binding first
+terraform apply -var clickpipes_auth=workload_identity -target=google_project_iam_member.clickpipes_workload_identity
+# 2. switch the authentication with the PATCH in step 3 above
+# 3. re-import the pipe in its switched state
+terraform state rm clickhouse_clickpipe.gcl
+terraform import -var clickpipes_auth=workload_identity clickhouse_clickpipe.gcl <service id>:<pipe id>
+# 4. set clickpipes_auth = "workload_identity" in terraform.tfvars and apply (removes the old account, key and binding)
+terraform apply
+```
+
+`clickhousectl` 0.4.2 cannot create workload identity pipes (support is due in the next release).
+
 ## Changing retention
 
 `landing_ttl_days` and `logs_ttl_days` are used only when the tables are created.

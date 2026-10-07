@@ -12,7 +12,7 @@ The reasoning is in [Design](design.md).
 
 - **Try it in a test project first.** From the moment `terraform apply` runs, the sink sends every log of the project to the topic.
 - **Pub/Sub is billed.** In the test environment, the volume sent to Pub/Sub was about 5 times the Cloud Logging billable volume ([Findings](findings.md), "Bytes that drive Pub/Sub cost"). Most of the difference was audit logs routed to `_Required`, which Cloud Logging does not bill (for billable logs alone it was about 1.2 times). High-volume noise can be excluded at the sink with `sink_exclusions`.
-- **The service account key is stored in the Terraform state.** Keep the state in an encrypted remote backend with restricted access (`terraform/terraform.tf` has an example).
+- **The service account key is stored in the Terraform state.** Keep the state in an encrypted remote backend with restricted access (`terraform/terraform.tf` has an example). If workload identity (Private Preview) is enabled for your organization, `clickpipes_auth = "workload_identity"` reads without a key ("Switching from a key to workload identity" in [Operations](operations.md)).
 - **The ClickPipes permissions cover the whole project.** The official least-privilege role ([Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)) allows creating, consuming and deleting subscriptions anywhere in the project. If that is too broad, put the topic in a project dedicated to log export.
 - **Storage in the existing `_Default` bucket does not change.** Stopping it is not part of the setup; see "Switching production logs" in [Operations](operations.md).
 
@@ -84,6 +84,7 @@ All variables and defaults are in `terraform/variables.tf`, and invalid values a
 | `sink_exclusions` | None | To drop high-volume noise you never search in ClickHouse at the sink |
 | `topic_storage_regions` | Unrestricted | Set it to the region of the ClickHouse Cloud service (e.g. `["asia-northeast1"]`); crossing regions adds delivery egress charges |
 | `topic_kms_key_name` | None (Google-managed key) | To encrypt the topic with a customer-managed key (CMEK) |
+| `clickpipes_auth` | `service_account_key` | `workload_identity` reads as the service account ClickPipes manages and creates no key (Private Preview; must be enabled for the organization) |
 | `landing_ttl_days` | 7 | Ingest delay + switch and backfill + verification and rollback, plus a margin |
 | `logs_ttl_days` | 400 | Log retention requirement |
 | `pipe_seek_type` | `latest` | Start position of a new managed subscription. Leave as is: the topic keeps no messages |
@@ -98,7 +99,7 @@ terraform plan
 ```
 
 Check the resources to be created and the sink `filter` in the plan output.
-Without ClickStack, 10 resources are created (including `terraform_data.subscription_cleanup`, which waits during destroy; 9 with `service_account_key_file`).
+Without ClickStack, 10 resources are created (including `terraform_data.subscription_cleanup`, which waits during destroy; 9 with `service_account_key_file`, 8 with `clickpipes_auth = "workload_identity"`).
 
 ```bash
 terraform apply

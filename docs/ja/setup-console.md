@@ -110,6 +110,10 @@ IAM & Admin の Roles で「Create role」を開き、Title、Description、ID �
 
 ## 5. サービスアカウントを作り、鍵を作る
 
+組織で Workload Identity（Private Preview）が有効なら、ClickPipes の画面で鍵を使わない認証も選べます。
+この手順の画面では確かめていません。
+API と Terraform での手順は [運用](operations.md) の「鍵から Workload Identity へ切り替える」にあります。
+
 IAM & Admin の Service accounts で「Create service account」を開き、名前と ID を入れて「Create and continue」を押します。
 
 ![サービスアカウントの作成](../images/console/04b_sa_create.png)

@@ -179,6 +179,49 @@ DROP と CREATE の間に INSERT されたブロックは、MV を通らずに L
 - MV の SELECT をそのまま `INSERT ... SELECT` に使う（列が位置で対応付けられて値がずれる）
 - L0 を重複除去なしで作り直しの元にする（再配信の重複が L1 に戻る）
 
+## 鍵から Workload Identity へ切り替える
+
+ClickPipes は、鍵ファイルの代わりに Workload Identity（Private Preview）で Pub/Sub を読めます（公式資料は未公開、[追加の PR](https://github.com/ClickHouse/ClickHouse/pull/122828)）。
+ClickPipes がサービスごとに管理する Google のサービスアカウントに権限を付けるだけで、鍵の作成、保管、ローテーションが要らなくなります。
+組織で機能を有効にしてもらう必要があり、ClickHouse Cloud のサービスと ClickPipes が GCP で動いていることが条件です。
+
+**新しく作る場合**は、`terraform.tfvars` に `clickpipes_auth = "workload_identity"` を書いて適用します。
+サービスアカウントと鍵は作られず、権限を付ける相手は `terraform output clickpipes_service_account` で確かめられます。
+
+**動いているパイプを切り替える場合**は、パイプを作り直さずに認証方式だけを変えられます。
+検証では、同じパイプと同じ管理サブスクリプションのまま Running が続き、取り込みは途切れませんでした（[検証記録](findings.md) の「Workload Identity」）。
+
+1. サービスの情報（`GET /v1/organizations/<org>/services/<service>/clickpipes/context`）で、`gcpWorkloadIdentity` の `supported` と `ready` が true であることと、`principal`（ClickPipes のサービスアカウント）を確かめる。
+2. カスタムロールを `serviceAccount:<principal>` にプロジェクト単位で付け、1 分ほど待つ。
+3. パイプに認証方式だけを送る。
+
+   ```bash
+   curl -u "$KEY_ID:$KEY_SECRET" -X PATCH -H "Content-Type: application/json" \
+     -d '{"source": {"pubsub": {"authentication": "SERVICE_ACCOUNT_WORKLOAD_IDENTITY"}}}' \
+     "https://api.clickhouse.cloud/v1/organizations/$ORG_ID/services/$SERVICE_ID/clickpipes/$PIPE_ID"
+   ```
+
+4. 数分間、パイプの状態と L0 への取り込みを確かめてから、古いサービスアカウントの鍵とロールの付与を削除する。
+
+Terraform で管理している場合、ClickHouse の Terraform プロバイダ v3.35.0 では、`clickpipes_auth` を変えて適用すると失敗します。
+パイプの更新で、変えていない `format` まで送り、API に拒否されるためです（`format is immutable for Pub/Sub sources`）。
+さらに、古いロールの付与と鍵がパイプの更新より先に削除されるので、その間はパイプが読めなくなります（検証では Degraded になり、メッセージは管理サブスクリプションに残って、切り替え後に欠損なく届きました）。
+プロバイダが直るまでは、次の順で切り替えます。
+
+```bash
+cd terraform
+# 1. Workload Identity 用のロールの付与だけを先に作る
+terraform apply -var clickpipes_auth=workload_identity -target=google_project_iam_member.clickpipes_workload_identity
+# 2. 上の 3. の PATCH で認証方式を切り替える
+# 3. state のパイプを、切り替えた後の状態で取り込み直す
+terraform state rm clickhouse_clickpipe.gcl
+terraform import -var clickpipes_auth=workload_identity clickhouse_clickpipe.gcl <service id>:<pipe id>
+# 4. terraform.tfvars に clickpipes_auth = "workload_identity" を書いて適用する（古いサービスアカウント、鍵、ロールの付与が消える）
+terraform apply
+```
+
+`clickhousectl` 0.4.2 は Workload Identity のパイプを作れません（対応は次の版に入る予定）。
+
 ## 保持期間を変える
 
 `landing_ttl_days` と `logs_ttl_days` はテーブルの作成時にだけ使われます。

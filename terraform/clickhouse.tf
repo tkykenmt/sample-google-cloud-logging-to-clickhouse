@@ -44,8 +44,8 @@ resource "clickhouse_clickpipe" "gcl" {
       format         = "JSONEachRow"
       seek_type      = var.pipe_seek_type
       seek_timestamp = var.pipe_seek_timestamp
-      authentication = "SERVICE_ACCOUNT"
-      service_account_key = {
+      authentication = local.workload_identity ? "SERVICE_ACCOUNT_WORKLOAD_IDENTITY" : "SERVICE_ACCOUNT"
+      service_account_key = local.workload_identity ? null : {
         service_account_file = local.sa_key_b64
       }
     }
@@ -73,6 +73,7 @@ resource "clickhouse_clickpipe" "gcl" {
     terraform_data.schema,
     terraform_data.subscription_cleanup,
     google_project_iam_member.clickpipes,
+    google_project_iam_member.clickpipes_workload_identity,
     google_pubsub_topic_iam_member.sink_publisher,
   ]
 }

@@ -105,6 +105,8 @@ If that is too broad, put the topic in a project dedicated to log export.
 
 ## 5. Create the service account and its key
 
+If workload identity (Private Preview) is enabled for your organization, the ClickPipes screen also offers authentication without a key. This page has not verified it in the console; the API and Terraform procedure is in "Switching from a key to workload identity" in [Operations](operations.md).
+
 Open "Create service account" under Service accounts in IAM & Admin, enter a name and ID, and press "Create and continue".
 
 ![Create service account](../images/console/04b_sa_create.png)

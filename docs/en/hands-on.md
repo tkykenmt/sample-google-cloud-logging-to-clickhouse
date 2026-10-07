@@ -221,6 +221,8 @@ Clean up here before part 3 as well (part 3 uses the same database `gcl`).
 
 ## Part 3: build it one piece at a time with gcloud and clickhousectl
 
+This part authenticates with a key file, because `clickhousectl` 0.4.2 cannot create workload identity pipes ("Switching from a key to workload identity" in [Operations](operations.md)).
+
 Build what Terraform created in part 2 with commands, one resource at a time.
 Each step says what it creates and why.
 Deploy with Terraform as in [Setup](setup.md), not with these commands.

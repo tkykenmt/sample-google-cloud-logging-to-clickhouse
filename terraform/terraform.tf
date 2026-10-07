@@ -9,7 +9,7 @@ terraform {
     }
     clickhouse = {
       source  = "ClickHouse/clickhouse"
-      version = ">= 3.34, < 4.0"
+      version = ">= 3.35, < 4.0"
     }
   }
 
