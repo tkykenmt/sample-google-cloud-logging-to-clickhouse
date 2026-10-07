@@ -363,6 +363,7 @@ ClickPipes workload identity (Private Preview) was tested in the test environmen
 | New deployment with Terraform (`clickpipes_auth = "workload_identity"`) | 8 resources, pipe Running, no loss with synthetic messages. `terraform destroy` removed the 8 resources and left nothing |
 | Switching from a key with Terraform | Provider v3.35.0's pipe update also sends the unchanged `format` and failed with `format is immutable for Pub/Sub sources and cannot be changed via PATCH`. The old binding and key were removed before the pipe update, so the pipe went Degraded and 1,000 messages did not arrive. After a PATCH it was Running again in about 20 seconds, and with those 1,000 there was no loss. Applying after `terraform state rm` and `terraform import` succeeded (procedure in [Operations](operations.md)) |
 | Main pipe of the test environment | Switched with PATCH and stayed Running for 5 minutes. The old key and binding were deleted about 22 minutes later; ingestion continued |
+| In the browser (steps 5 and 7 of [Setup in the browser](setup-console.md)) | Choosing "Workload identity" under "Authentication method" showed the service account to grant. After granting the custom role with "Grant access" in IAM, the connection check and the topic list passed. Running about 30 seconds after creation; the 3,800 synthetic messages sent after creation arrived in L0 and L1 with no loss |
 | `clickhousectl` | 0.4.2 (2026-09-03) requires a key file and cannot create workload identity pipes; support is in unreleased changes |
 
 ## Not tested
