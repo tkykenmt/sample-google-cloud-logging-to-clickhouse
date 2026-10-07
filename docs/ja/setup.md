@@ -18,6 +18,7 @@ gcloud と clickhousectl で 1 つずつ作りながら仕組みを確かめる�
   量の多いノイズは、`sink_exclusions` でシンクから除外できます。
 - **サービスアカウントの鍵は Terraform の state に保存されます。**
   state は、暗号化したリモートのバックエンドに、アクセスを絞って置きます（`terraform/terraform.tf` に例があります）。
+  組織で Workload Identity（Private Preview）が有効なら、`clickpipes_auth = "workload_identity"` で鍵を使わずに読ませられます（[運用](operations.md) の「鍵から Workload Identity へ切り替える」）。
 - **ClickPipes の権限はプロジェクト全体に及びます。**
   公式の最小権限ロール（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）は、プロジェクト内のサブスクリプションの作成、受信、削除を許します。
   範囲が広すぎる場合は、ログの送出専用のプロジェクトにトピックを置きます。
@@ -93,6 +94,7 @@ cp terraform.tfvars.example terraform.tfvars
 | `sink_exclusions` | なし | 量が多く ClickHouse で検索しないノイズを、シンクで除外する場合 |
 | `topic_storage_regions` | 制限なし | ClickHouse Cloud のサービスと同じリージョンにする（例 `["asia-northeast1"]`）。リージョンをまたぐと配信に転送料がかかる |
 | `topic_kms_key_name` | なし（Google が管理する鍵） | トピックを顧客管理の鍵（CMEK）で暗号化するとき |
+| `clickpipes_auth` | `service_account_key` | `workload_identity` にすると、ClickPipes が管理するサービスアカウントで読み、鍵を作らない（Private Preview、組織で有効にする必要がある） |
 | `landing_ttl_days` | 7 | 取り込みの遅延、切り替えとバックフィル、照合とロールバックに必要な期間に余裕を加える |
 | `logs_ttl_days` | 400 | ログの保持要件 |
 | `pipe_seek_type` | `latest` | 新しい管理サブスクリプションの開始位置。トピックに保持がないので、通常は変えない |
@@ -107,7 +109,7 @@ terraform plan
 ```
 
 `plan` の出力で、作られるリソースとシンクのフィルタ（`filter`）を確かめます。
-ClickStack を使わない場合、作られるリソースは 10 個です（削除時の待ち合わせ用の `terraform_data.subscription_cleanup` を含む。`service_account_key_file` を指定した場合は 9 個）。
+ClickStack を使わない場合、作られるリソースは 10 個です（削除時の待ち合わせ用の `terraform_data.subscription_cleanup` を含む。`service_account_key_file` を指定した場合は 9 個、`clickpipes_auth = "workload_identity"` の場合は 8 個）。
 
 ```bash
 terraform apply

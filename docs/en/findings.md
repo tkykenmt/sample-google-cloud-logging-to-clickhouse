@@ -351,6 +351,21 @@ After the final-review fixes, the Terraform steps of [Setup](setup.md) and part 
 | `tools/chq.py`, `verify/completeness.sh` | Run from the top of the repository; `clickhousectl` used the API key from the environment |
 | Hands-on part 3 (gcloud and clickhousectl) | Run as written from creation to removal. Key creation right after the service account was created failed with `NOT_FOUND` and succeeded on a retry 10 seconds later. A pipe created with `clickhousectl` 0.4.2 without `--enable-ordering` still had ordering enabled on its managed subscription. 6,000 synthetic messages, no loss, 200 redelivery duplicates in each of L0 and L1. The managed subscription was gone 22 seconds after the pipe was deleted. The writer identity of the gcloud-created sink was also the project-wide `service-<project-number>@gcp-sa-logging.iam.gserviceaccount.com` |
 
+## Workload identity (2026-10-07)
+
+ClickPipes workload identity (Private Preview) was tested in the test environment (GCP Tokyo) with the feature enabled for the organization, through the OpenAPI and ClickHouse Terraform provider v3.35.0.
+
+| Step | Result |
+|---|---|
+| Service context (`clickpipes/context`) | `gcpWorkloadIdentity.supported` and `ready` both true; the identity to grant is `ch-<id>@clickpipes-production.iam.gserviceaccount.com` |
+| New pipe through the OpenAPI | Created with `SERVICE_ACCOUNT_WORKLOAD_IDENTITY` after granting the custom role. 1,200 synthetic messages, no loss in L0. The managed subscription was gone 22 seconds after the pipe was deleted |
+| Switching a key-based pipe with PATCH | Only the authentication was sent, while synthetic messages flowed. Same pipe and managed subscription, Running throughout, 4,800 messages with no loss. Ingestion continued after the key's service account was deleted (1,800 messages, no loss) |
+| New deployment with Terraform (`clickpipes_auth = "workload_identity"`) | 8 resources, pipe Running, no loss with synthetic messages. `terraform destroy` removed the 8 resources and left nothing |
+| Switching from a key with Terraform | Provider v3.35.0's pipe update also sends the unchanged `format` and failed with `format is immutable for Pub/Sub sources and cannot be changed via PATCH`. The old binding and key were removed before the pipe update, so the pipe went Degraded and 1,000 messages did not arrive. After a PATCH it was Running again in about 20 seconds, and with those 1,000 there was no loss. Applying after `terraform state rm` and `terraform import` succeeded (procedure in [Operations](operations.md)) |
+| Main pipe of the test environment | Switched with PATCH and stayed Running for 5 minutes. The old key and binding were deleted about 22 minutes later; ingestion continued |
+| In the browser (steps 5 and 7 of [Setup in the browser](setup-console.md)) | Choosing "Workload identity" under "Authentication method" showed the service account to grant. After granting the custom role with "Grant access" in IAM, the connection check and the topic list passed. Running about 30 seconds after creation; the 3,800 synthetic messages sent after creation arrived in L0 and L1 with no loss |
+| `clickhousectl` | 0.4.2 (2026-09-03) requires a key file and cannot create workload identity pipes; support is in unreleased changes |
+
 ## Not tested
 
 - Replicas needed at tens of MB/s

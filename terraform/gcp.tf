@@ -1,6 +1,23 @@
 locals {
   sink_filter = coalesce(var.sink_filter, "logName:\"projects/${var.gcp_project_id}/logs/\"")
-  sa_key_b64  = var.service_account_key_file != null ? filebase64(var.service_account_key_file) : google_service_account_key.clickpipes[0].private_key
+
+  # Workload identity: ClickPipes reads with its own Google service account (no key). Otherwise a service
+  # account of this project and its JSON key.
+  workload_identity = var.clickpipes_auth == "workload_identity"
+  sa_key_b64 = local.workload_identity ? null : (
+    var.service_account_key_file != null ? filebase64(var.service_account_key_file) : google_service_account_key.clickpipes[0].private_key
+  )
+  clickpipes_principal = local.workload_identity ? data.clickhouse_clickpipes_service_context.service[0].gcp_workload_identity.principal : google_service_account.clickpipes[0].email
+}
+
+# Workload identity (Private Preview): the Google service account ClickPipes manages for this ClickHouse
+# Cloud service. The data source waits until the identity is ready and fails if it is not supported.
+# https://clickhouse.com/docs/integrations/clickpipes/security/gcp-workload-identity
+data "clickhouse_clickpipes_service_context" "service" {
+  count = local.workload_identity ? 1 : 0
+
+  service_id    = var.clickhouse_service_id
+  ready_timeout = "5m"
 }
 
 # No message retention on the topic: L0 in ClickHouse is the replay buffer.
@@ -43,8 +60,8 @@ resource "google_pubsub_topic_iam_member" "sink_publisher" {
 # https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth
 # ClickPipes lists topics and creates short-lived discovery subscriptions (clickpipes-discovery-<uuid>) as
 # well as its managed subscription (clickpipes-<pipe id>), so it needs more than subscriber rights.
-# The key can therefore create, consume and delete subscriptions anywhere in the project: use a project
-# dedicated to log export if that is too broad, and treat the key as a secret.
+# The identity can therefore create, consume and delete subscriptions anywhere in the project: use a
+# project dedicated to log export if that is too broad, and treat a key as a secret.
 resource "google_project_iam_custom_role" "clickpipes" {
   role_id     = var.clickpipes_role_id
   title       = "ClickPipes Pub/Sub ingestion"
@@ -61,19 +78,45 @@ resource "google_project_iam_custom_role" "clickpipes" {
 }
 
 resource "google_service_account" "clickpipes" {
+  count = local.workload_identity ? 0 : 1
+
   account_id   = var.clickpipes_service_account_id
   display_name = "ClickPipes reader for ${var.topic_name}"
 }
 
 resource "google_project_iam_member" "clickpipes" {
+  count = local.workload_identity ? 0 : 1
+
   project = var.gcp_project_id
   role    = google_project_iam_custom_role.clickpipes.id
-  member  = "serviceAccount:${google_service_account.clickpipes.email}"
+  member  = "serviceAccount:${google_service_account.clickpipes[0].email}"
 }
 
 resource "google_service_account_key" "clickpipes" {
-  count              = var.service_account_key_file == null ? 1 : 0
-  service_account_id = google_service_account.clickpipes.name
+  count = !local.workload_identity && var.service_account_key_file == null ? 1 : 0
+
+  service_account_id = google_service_account.clickpipes[0].name
+}
+
+# A separate resource from the key binding, so that switching an existing deployment to workload identity
+# grants the new identity first, then updates the pipe, then removes the old binding, account and key.
+resource "google_project_iam_member" "clickpipes_workload_identity" {
+  count = local.workload_identity ? 1 : 0
+
+  project = var.gcp_project_id
+  role    = google_project_iam_custom_role.clickpipes.id
+  member  = "serviceAccount:${local.clickpipes_principal}"
+}
+
+# State addresses from before clickpipes_auth existed.
+moved {
+  from = google_service_account.clickpipes
+  to   = google_service_account.clickpipes[0]
+}
+
+moved {
+  from = google_project_iam_member.clickpipes
+  to   = google_project_iam_member.clickpipes[0]
 }
 
 # Deleting the ClickPipe returns at once, and ClickPipes deletes its managed subscription afterwards
@@ -98,6 +141,7 @@ resource "terraform_data" "subscription_cleanup" {
 
   depends_on = [
     google_project_iam_member.clickpipes,
+    google_project_iam_member.clickpipes_workload_identity,
     google_project_iam_custom_role.clickpipes,
     google_service_account_key.clickpipes,
     google_pubsub_topic_iam_member.sink_publisher,

@@ -103,7 +103,29 @@ Leaving "Role launch stage" at the default Alpha does not change the permissions
 The role allows listing topics and creating, consuming and deleting subscriptions anywhere in the project.
 If that is too broad, put the topic in a project dedicated to log export.
 
-## 5. Create the service account and its key
+## 5. Prepare ClickPipes authentication
+
+ClickPipes reads the topic with a service account key file (the default) or with workload identity.
+Workload identity is in Private Preview and must be enabled for your organization.
+When it is, choose it: no key is created, so there is nothing to store or rotate.
+
+### With workload identity
+
+1. In the ClickHouse Cloud console, open "Create ClickPipe" → "GCP Pub/Sub" (step 7) and choose "Workload identity" under "Authentication method".
+   "Grant access to the ClickPipes service account" shows the service account ClickPipes manages for this service (`ch-<id>@clickpipes-production.iam.gserviceaccount.com`); copy it.
+   Leave the page open and continue it in step 7.
+
+   ![Choosing workload identity](../images/console/06b2_clickpipe_connection_wi.png)
+
+2. In Google Cloud, open "Grant access" under IAM in IAM & Admin, enter the copied service account under New principals and the custom role from step 4 under Role, and press "Save".
+
+   ![Granting the role](../images/console/04e_wi_iam_grant.png)
+
+This service account belongs to the ClickHouse Cloud service; nothing is created in your project.
+Skip creating a service account and key ("With a key file" below) and go to step 6.
+In testing, the connection check in step 7 passed right after the role was granted ([Findings](findings.md), "Workload identity").
+
+### With a key file
 
 Open "Create service account" under Service accounts in IAM & Admin, enter a name and ID, and press "Create and continue".
 
@@ -145,7 +167,8 @@ The pipe writes into the existing L0 (`gcl.gcl_landing_v1`), and the MVs build L
 Under the service's "Data sources", open "Create ClickPipe" and choose "GCP Pub/Sub".
 The page labels it Beta (the documentation says Private Preview, [ClickPipes connectors](https://clickhouse.com/docs/integrations/clickpipes)).
 
-**Setup your ClickPipe connection**: enter the ClickPipe name and the GCP Project ID, and upload the key file from step 5.
+**Setup your ClickPipe connection**: enter the ClickPipe name and the GCP Project ID.
+Under "Authentication method", keep "Service account key" and upload the key file from step 5, or choose "Workload identity" (with the role granted in step 5, nothing else is needed).
 
 ![Connection](../images/console/06b_clickpipe_connection.png)
 
@@ -228,11 +251,13 @@ For the periodic checks, paste the queries of `verify/checks.sql` into the SQL c
 Remove in reverse order:
 
 1. Delete the ClickPipe under Data sources in the ClickHouse Cloud console.
-2. Wait in Pub/Sub Subscriptions until the managed subscription (`clickpipes-<pipe id>`) is gone. ClickPipes deletes it after the pipe, with the service account from step 5. Deleting step 5 or 4 before that leaves the subscription behind, attached to the deleted topic (`_deleted-topic_`) (with Terraform, it was gone 23 seconds after the pipe was deleted).
+2. Wait in Pub/Sub Subscriptions until the managed subscription (`clickpipes-<pipe id>`) is gone. ClickPipes deletes it after the pipe, with the service account from step 5 (with workload identity, the ClickPipes service account). Deleting step 5 or 4 before that leaves the subscription behind, attached to the deleted topic (`_deleted-topic_`) (with Terraform, it was gone 23 seconds after the pipe was deleted).
 3. Run `DROP DATABASE IF EXISTS gcl SYNC` in the SQL console.
 4. Delete the sink in Log router.
 5. Delete the topic in Pub/Sub.
 6. Remove the service account's role binding in IAM and delete the service account in Service accounts (its keys stop working).
+   With workload identity, only remove the binding of the ClickPipes service account (ClickPipes manages that account; do not delete it).
+   Keep the binding while other pipes of the same ClickHouse Cloud service read this project.
 7. Delete the custom role in Roles. It can be restored within 7 days, and its ID cannot be reused until it is permanently deleted.
 8. Delete the source from step 8 under Sources in ClickStack Team Settings.
 9. If you do not keep the service from step 1, delete it.

@@ -108,7 +108,29 @@ IAM & Admin の Roles で「Create role」を開き、Title、Description、ID �
 このロールは、プロジェクト内のトピックの一覧と、サブスクリプションの作成、受信、削除を許します。
 範囲が広すぎる場合は、ログの送出専用のプロジェクトにトピックを置きます。
 
-## 5. サービスアカウントを作り、鍵を作る
+## 5. ClickPipes の認証を用意する
+
+ClickPipes がトピックを読む方法は、サービスアカウントの鍵ファイル（既定）か、Workload Identity です。
+Workload Identity は Private Preview で、組織で有効にしてもらう必要があります。
+有効なら、鍵を作らず、保管とローテーションも要らないので、こちらを選びます。
+
+### Workload Identity を使う場合
+
+1. ClickHouse Cloud Console で 7 の「Create ClickPipe」→「GCP Pub/Sub」を開き、「Authentication method」で「Workload identity」を選ぶ。
+   「Grant access to the ClickPipes service account」に、ClickPipes がこのサービス用に管理するサービスアカウント（`ch-<ID>@clickpipes-production.iam.gserviceaccount.com`）が出るので、コピーする。
+   画面はこのまま開いておき、7 で続きを入れます。
+
+   ![Workload Identity の選択](../images/console/06b2_clickpipe_connection_wi.png)
+
+2. Google Cloud の IAM & Admin の IAM で「Grant access」を開き、New principals にコピーしたサービスアカウントを、Role に 4 のカスタムロールを入れて「Save」を押す。
+
+   ![ロールの付与](../images/console/04e_wi_iam_grant.png)
+
+このサービスアカウントは ClickHouse Cloud のサービスごとに決まり、自分のプロジェクトには作られません。
+サービスアカウントと鍵の作成（次の「鍵ファイルを使う場合」）は飛ばし、6 へ進みます。
+検証では、ロールを付けた直後に 7 の接続の検証が通りました（[検証記録](findings.md) の「Workload Identity」）。
+
+### 鍵ファイルを使う場合
 
 IAM & Admin の Service accounts で「Create service account」を開き、名前と ID を入れて「Create and continue」を押します。
 
@@ -152,7 +174,8 @@ ClickHouse Cloud Console でサービスの「SQL console」を開き、新し�
 サービスの「Data sources」で「Create ClickPipe」を開き、「GCP Pub/Sub」を選びます。
 画面には Beta と表示されます（公式資料では Private Preview、[ClickPipes の一覧](https://clickhouse.com/docs/integrations/clickpipes)）。
 
-**Setup your ClickPipe connection**：ClickPipe の名前、GCP Project ID を入れ、5 の鍵ファイルをアップロードします。
+**Setup your ClickPipe connection**：ClickPipe の名前、GCP Project ID を入れます。
+「Authentication method」は、鍵ファイルなら「Service account key」のまま 5 の鍵ファイルをアップロードし、Workload Identity なら「Workload identity」を選びます（5 でロールを付けていれば、ほかに入れるものはありません）。
 
 ![接続の設定](../images/console/06b_clickpipe_connection.png)
 
@@ -236,12 +259,14 @@ L0 の行数は、L1 とノイズの件数の合計とほぼ一致します（L1
 
 1. ClickHouse Cloud Console の Data sources で ClickPipe を削除する。
 2. Pub/Sub の Subscriptions で、管理サブスクリプション（`clickpipes-<パイプ ID>`）が消えるのを待つ。
-   ClickPipes は、パイプの削除後に 5 のサービスアカウントでサブスクリプションを消します。
+   ClickPipes は、パイプの削除後に 5 のサービスアカウント（Workload Identity では ClickPipes のサービスアカウント）でサブスクリプションを消します。
    消える前に 5 や 4 を削除すると、サブスクリプションが削除済みのトピック（`_deleted-topic_`）を指したまま残ります（Terraform での検証では、パイプの削除から 23 秒で消えました）。
 3. SQL コンソールで `DROP DATABASE IF EXISTS gcl SYNC` を実行する。
 4. Log router でシンクを削除する。
 5. Pub/Sub でトピックを削除する。
 6. IAM でサービスアカウントのロールの付与を外し、Service accounts でサービスアカウントを削除する（鍵も無効になる）。
+   Workload Identity では、ClickPipes のサービスアカウントからロールの付与を外すだけです（サービスアカウントは ClickPipes の管理なので削除しません）。
+   同じ ClickHouse Cloud のサービスでほかのパイプが同じプロジェクトを読んでいるときは、付与を残します。
 7. Roles でカスタムロールを削除する。
    7 日以内なら復元でき、完全に削除されるまで同じ ID では作り直せません。
 8. ClickStack の Team Settings の Sources で、8 で作ったソースを削除する。

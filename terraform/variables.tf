@@ -2,6 +2,17 @@
 
 # --- Google Cloud ---------------------------------------------------------------------------------
 
+variable "clickpipes_auth" {
+  description = "How ClickPipes authenticates to Pub/Sub: service_account_key (a service account of this project and its JSON key) or workload_identity (Private Preview: the Google service account ClickPipes manages for the ClickHouse Cloud service, no key; must be enabled for the organization)."
+  type        = string
+  default     = "service_account_key"
+
+  validation {
+    condition     = contains(["service_account_key", "workload_identity"], var.clickpipes_auth)
+    error_message = "clickpipes_auth must be service_account_key or workload_identity."
+  }
+}
+
 variable "clickpipes_role_id" {
   description = "ID of the project-level custom role for ClickPipes."
   type        = string
@@ -35,9 +46,14 @@ variable "gcp_project_id" {
 }
 
 variable "service_account_key_file" {
-  description = "Path to an existing JSON key for the ClickPipes service account. null = create a key with Terraform (the key then lives in the state; keep the state in an encrypted backend). Use a file when an organization policy blocks key creation."
+  description = "Path to an existing JSON key for the ClickPipes service account. null = create a key with Terraform (the key then lives in the state; keep the state in an encrypted backend). Use a file when an organization policy blocks key creation. Not used with clickpipes_auth = workload_identity."
   type        = string
   default     = null
+
+  validation {
+    condition     = var.service_account_key_file == null || var.clickpipes_auth == "service_account_key"
+    error_message = "service_account_key_file cannot be combined with clickpipes_auth = \"workload_identity\"."
+  }
 }
 
 variable "sink_exclusions" {

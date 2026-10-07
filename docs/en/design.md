@@ -248,7 +248,7 @@ Treat ClickHouse as a copy for analysis alongside other logs.
 
 **Authentication and network**
 
-- ClickPipes takes a service account key file; it is the only supported authentication. Grant the official least-privilege role ([Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)) at the project level (`terraform/gcp.tf`), and assign owners for key storage and rotation.
+- ClickPipes authenticates with a service account key file or with workload identity (Private Preview, official docs not yet published, [docs PR](https://github.com/ClickHouse/ClickHouse/pull/122828)). With workload identity, permissions go to the Google service account ClickPipes manages for the service and no key is created (`clickpipes_auth`). (verified) Either way, grant the official least-privilege role ([Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)) at the project level (`terraform/gcp.tf`); with a key, assign owners for key storage and rotation.
 - The role allows listing topics and creating, consuming and deleting subscriptions anywhere in the project, because ClickPipes also creates short-lived discovery subscriptions (`clickpipes-discovery-<uuid>`) besides the managed one. To narrow it, put the topic in a project dedicated to log export.
 - If Pub/Sub is inside a VPC Service Controls perimeter, check whether ClickPipes outside the perimeter can read it. (PoC)
 - Place the ClickHouse Cloud service in the same region where the topic stores messages. Crossing regions adds egress charges to delivery. (docs: [pricing](https://cloud.google.com/pubsub/pricing))

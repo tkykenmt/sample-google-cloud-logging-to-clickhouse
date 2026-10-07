@@ -9,8 +9,8 @@ output "clickpipe_state" {
 }
 
 output "clickpipes_service_account" {
-  description = "Service account whose key ClickPipes uses to read the topic."
-  value       = google_service_account.clickpipes.email
+  description = "Google service account ClickPipes reads the topic as: the one in this project (key) or the ClickPipes-managed one (workload identity)."
+  value       = local.clickpipes_principal
 }
 
 output "clickstack_source_id" {

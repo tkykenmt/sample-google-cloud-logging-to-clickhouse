@@ -374,6 +374,22 @@ GCP の東京リージョン（`asia-northeast1`）に `clickhousectl cloud serv
 | `tools/chq.py`、`verify/completeness.sh` | リポジトリの最上位で実行し、`clickhousectl` は環境変数の API キーを使った |
 | ハンズオン第 3 部（gcloud と clickhousectl） | 文書のとおりに作成から削除まで通した。サービスアカウントを作った直後の鍵の作成は `NOT_FOUND` で失敗し、10 秒後のやり直しで成功した。`clickhousectl` 0.4.2 で `--enable-ordering` を付けずに作ったパイプでも、管理サブスクリプションの順序付けは有効だった。合成ログ 6,000 件で欠損 0、再配信の重複が L0 と L1 に各 200 件。パイプの削除から管理サブスクリプションが消えるまで 22 秒。gcloud で作ったシンクの書き込み用 ID も、プロジェクトで共有の `service-<プロジェクト番号>@gcp-sa-logging.iam.gserviceaccount.com` だった |
 
+## Workload Identity（2026-10-07）
+
+ClickPipes の Workload Identity（Private Preview）を、組織で有効にした検証環境（GCP 東京）で試しました。
+使ったのは OpenAPI と ClickHouse の Terraform プロバイダ v3.35.0 です。
+
+| 手順 | 結果 |
+|---|---|
+| サービスの情報（`clickpipes/context`） | `gcpWorkloadIdentity` の `supported` と `ready` がどちらも true。権限を付ける相手は `ch-<ID>@clickpipes-production.iam.gserviceaccount.com` |
+| OpenAPI で新しく作る | カスタムロールを付けてから `SERVICE_ACCOUNT_WORKLOAD_IDENTITY` で作成。合成ログ 1,200 件で L0 の欠損 0。パイプの削除から管理サブスクリプションが消えるまで 22 秒 |
+| 鍵で動くパイプを PATCH で切り替える | 合成ログを流しながら認証方式だけを送った。同じパイプと管理サブスクリプションのまま Running が続き、4,800 件で欠損 0。その後に鍵のサービスアカウントを消しても取り込みは続いた（1,800 件、欠損 0） |
+| Terraform で新しく作る（`clickpipes_auth = "workload_identity"`） | 8 リソースで、パイプは Running。合成ログで欠損 0。`terraform destroy` で 8 リソースを消し、何も残らなかった |
+| Terraform で鍵から切り替える | プロバイダ v3.35.0 のパイプの更新は、変えていない `format` も送り、`format is immutable for Pub/Sub sources and cannot be changed via PATCH` で失敗した。古いロールの付与と鍵はパイプの更新より先に削除され、パイプは Degraded になって 1,000 件が届かなかった。PATCH で切り替えると約 20 秒で Running に戻り、その 1,000 件を含めて欠損 0 になった。`terraform state rm` と `terraform import` の後の適用は成功した（[運用](operations.md) の手順） |
+| 検証環境の本線のパイプ | PATCH で切り替え、5 分間 Running が続くのを確かめた。約 22 分後に古い鍵とロールの付与を削除し、取り込みは続いた |
+| ブラウザで作る（[ブラウザでの構築](setup-console.md) の 5 と 7） | 「Authentication method」で「Workload identity」を選ぶと、ロールを付ける相手のサービスアカウントが画面に出た。IAM の「Grant access」でカスタムロールを付けると、接続の検証とトピックの一覧が通った。作成から約 30 秒で Running になり、作成後に送った合成ログ 3,800 件は L0 と L1 で欠損 0 |
+| `clickhousectl` | 0.4.2（2026-09-03）は鍵ファイルが必須で、Workload Identity のパイプは作れない。対応はリリース前の変更に入っている |
+
 ## 未検証の項目
 
 - 数十 MB/s 級の流量でのパイプの必要なレプリカ数

@@ -292,9 +292,10 @@ ClickHouse は、他のログと合わせて分析するための写しとして
 
 **認証とネットワーク**
 
-- ClickPipes にはサービスアカウントの鍵ファイルを渡します。
-  認証の方法は鍵ファイルだけです。
-  公式の最小権限ロール（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）をプロジェクト単位で付け（`terraform/gcp.tf`）、鍵の保管とローテーションの担当を決めます。
+- ClickPipes の認証は、サービスアカウントの鍵ファイルか、Workload Identity（Private Preview、公式資料は未公開、[追加の PR](https://github.com/ClickHouse/ClickHouse/pull/122828)）です。
+  Workload Identity では、ClickPipes がサービスごとに管理する Google のサービスアカウントに権限を付け、鍵を作りません（`clickpipes_auth`）。（確認済み）
+  どちらの場合も、公式の最小権限ロール（[Pub/Sub IAM permissions](https://clickhouse.com/docs/integrations/clickpipes/pubsub/auth)）をプロジェクト単位で付けます（`terraform/gcp.tf`）。
+  鍵を使う場合は、鍵の保管とローテーションの担当を決めます。
 - このロールは、プロジェクト内のトピックの一覧と、サブスクリプションの作成、受信、削除を許します。
   ClickPipes は管理サブスクリプションのほかに、確認用の一時的なサブスクリプション（`clickpipes-discovery-<uuid>`）も作るためです。
   範囲を狭めたい場合は、ログの送出専用のプロジェクトにトピックを置きます。

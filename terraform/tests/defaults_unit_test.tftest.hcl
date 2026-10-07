@@ -2,7 +2,17 @@
 # (provisioners do not run at plan). Run from terraform/: terraform init -backend=false && terraform test
 
 mock_provider "google" {}
-mock_provider "clickhouse" {}
+mock_provider "clickhouse" {
+  mock_data "clickhouse_clickpipes_service_context" {
+    defaults = {
+      gcp_workload_identity = {
+        supported = true
+        ready     = true
+        principal = "ch-test@clickpipes-production.iam.gserviceaccount.com"
+      }
+    }
+  }
+}
 
 variables {
   gcp_project_id        = "my-project"
@@ -159,4 +169,43 @@ run "rejects_non_rfc3339_seek_timestamp" {
   }
 
   expect_failures = [var.pipe_seek_timestamp]
+}
+
+run "workload_identity" {
+  command = plan
+
+  variables {
+    clickpipes_auth = "workload_identity"
+  }
+
+  assert {
+    condition     = length(google_service_account.clickpipes) == 0 && length(google_service_account_key.clickpipes) == 0 && length(google_project_iam_member.clickpipes) == 0
+    error_message = "Workload identity creates no service account, key or key binding."
+  }
+
+  assert {
+    condition     = google_project_iam_member.clickpipes_workload_identity[0].member == "serviceAccount:ch-test@clickpipes-production.iam.gserviceaccount.com"
+    error_message = "The custom role is granted to the ClickPipes-managed principal."
+  }
+
+  assert {
+    condition     = clickhouse_clickpipe.gcl.source.pubsub.authentication == "SERVICE_ACCOUNT_WORKLOAD_IDENTITY" && clickhouse_clickpipe.gcl.source.pubsub.service_account_key == null
+    error_message = "The pipe uses workload identity and no key."
+  }
+
+  assert {
+    condition     = output.clickpipes_service_account == "ch-test@clickpipes-production.iam.gserviceaccount.com"
+    error_message = "The output shows the principal to authorize."
+  }
+}
+
+run "rejects_key_file_with_workload_identity" {
+  command = plan
+
+  variables {
+    clickpipes_auth          = "workload_identity"
+    service_account_key_file = "tests/fixtures/key.json"
+  }
+
+  expect_failures = [var.service_account_key_file]
 }
