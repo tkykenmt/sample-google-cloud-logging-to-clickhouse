@@ -188,7 +188,7 @@ In testing, the same pipe and managed subscription stayed Running and ingestion 
 4. Watch the pipe state and L0 ingestion for a few minutes, then delete the old service account's key and role binding.
 
 Under Terraform, ClickHouse provider v3.35.0 fails when `clickpipes_auth` is changed.
-Its pipe update also sends the unchanged `format`, which the API rejects (`format is immutable for Pub/Sub sources`).
+Its pipe update also sends the unchanged `format`, which the API rejects (`format is immutable for Pub/Sub sources`, [#745](https://github.com/ClickHouse/terraform-provider-clickhouse/issues/745)).
 The old binding and key are also removed before the pipe update, so the pipe cannot read in between (in testing it went Degraded; the messages stayed in the managed subscription and arrived without loss after the switch).
 Until the provider is fixed, switch in this order:
 

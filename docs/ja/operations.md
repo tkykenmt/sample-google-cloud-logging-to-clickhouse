@@ -204,7 +204,7 @@ ClickPipes がサービスごとに管理する Google のサービスアカウ�
 4. 数分間、パイプの状態と L0 への取り込みを確かめてから、古いサービスアカウントの鍵とロールの付与を削除する。
 
 Terraform で管理している場合、ClickHouse の Terraform プロバイダ v3.35.0 では、`clickpipes_auth` を変えて適用すると失敗します。
-パイプの更新で、変えていない `format` まで送り、API に拒否されるためです（`format is immutable for Pub/Sub sources`）。
+パイプの更新で、変えていない `format` まで送り、API に拒否されるためです（`format is immutable for Pub/Sub sources`、[#745](https://github.com/ClickHouse/terraform-provider-clickhouse/issues/745)）。
 さらに、古いロールの付与と鍵がパイプの更新より先に削除されるので、その間はパイプが読めなくなります（検証では Degraded になり、メッセージは管理サブスクリプションに残って、切り替え後に欠損なく届きました）。
 プロバイダが直るまでは、次の順で切り替えます。
 
