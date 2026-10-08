@@ -82,6 +82,11 @@ resource "google_service_account" "clickpipes" {
 
   account_id   = var.clickpipes_service_account_id
   display_name = "ClickPipes reader for ${var.topic_name}"
+
+  # Removed only after the pipe has switched away from this key (see the workload identity binding below).
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "google_project_iam_member" "clickpipes" {
@@ -90,12 +95,22 @@ resource "google_project_iam_member" "clickpipes" {
   project = var.gcp_project_id
   role    = google_project_iam_custom_role.clickpipes.id
   member  = "serviceAccount:${google_service_account.clickpipes[0].email}"
+
+  # Removed only after the pipe has switched away from this key (see the workload identity binding below).
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "google_service_account_key" "clickpipes" {
   count = !local.workload_identity && var.service_account_key_file == null ? 1 : 0
 
   service_account_id = google_service_account.clickpipes[0].name
+
+  # Removed only after the pipe has switched away from this key (see the workload identity binding below).
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # A separate resource from the key binding, so that switching an existing deployment to workload identity
