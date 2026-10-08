@@ -377,7 +377,7 @@ GCP の東京リージョン（`asia-northeast1`）に `clickhousectl cloud serv
 ## Workload Identity（2026-10-07）
 
 ClickPipes の Workload Identity（Private Preview）を、組織で有効にした検証環境（GCP 東京）で試しました。
-使ったのは OpenAPI と ClickHouse の Terraform プロバイダ v3.35.0 です。
+使ったのは OpenAPI と ClickHouse の Terraform プロバイダ v3.35.0 で、2026-10-08 に v3.37.0 で Terraform の切り替えを追試しました。
 
 | 手順 | 結果 |
 |---|---|
@@ -385,7 +385,10 @@ ClickPipes の Workload Identity（Private Preview）を、組織で有効にし
 | OpenAPI で新しく作る | カスタムロールを付けてから `SERVICE_ACCOUNT_WORKLOAD_IDENTITY` で作成。合成ログ 1,200 件で L0 の欠損 0。パイプの削除から管理サブスクリプションが消えるまで 22 秒 |
 | 鍵で動くパイプを PATCH で切り替える | 合成ログを流しながら認証方式だけを送った。同じパイプと管理サブスクリプションのまま Running が続き、4,800 件で欠損 0。その後に鍵のサービスアカウントを消しても取り込みは続いた（1,800 件、欠損 0） |
 | Terraform で新しく作る（`clickpipes_auth = "workload_identity"`） | 8 リソースで、パイプは Running。合成ログで欠損 0。`terraform destroy` で 8 リソースを消し、何も残らなかった |
-| Terraform で鍵から切り替える | プロバイダ v3.35.0 のパイプの更新は、変えていない `format` も送り、`format is immutable for Pub/Sub sources and cannot be changed via PATCH` で失敗した。古いロールの付与と鍵はパイプの更新より先に削除され、パイプは Degraded になって 1,000 件が届かなかった。PATCH で切り替えると約 20 秒で Running に戻り、その 1,000 件を含めて欠損 0 になった。`terraform state rm` と `terraform import` の後の適用は成功した（[運用](operations.md) の手順） |
+| Terraform で鍵から切り替える（v3.35.0） | プロバイダ v3.35.0 のパイプの更新は、変えていない `format` も送り、`format is immutable for Pub/Sub sources and cannot be changed via PATCH` で失敗した。古いロールの付与と鍵はパイプの更新より先に削除され、パイプは Degraded になって 1,000 件が届かなかった。PATCH で切り替えると約 20 秒で Running に戻り、その 1,000 件を含めて欠損 0 になった。パイプを PATCH で切り替えてから `terraform state rm` と `terraform import` をすると、その後の適用は成功した。プロバイダの不具合は [#745](https://github.com/ClickHouse/terraform-provider-clickhouse/issues/745) で、v3.37.0 で直った |
+| Terraform で鍵から切り替える（v3.37.0、`create_before_destroy` なし） | 合成ログを毎秒 10 件流しながら、`clickpipes_auth` を変えて 1 回適用した（約 46 秒）。古い鍵とロールの付与が先に消え、約 20 秒後にパイプが更新された。パイプは Running のまま更新を迎え、Provisioning を約 13 秒経て Running に戻った |
+| 鍵の方式に戻す（v3.37.0） | 1 回の適用で、サービスアカウントと鍵とロールの付与を作り、パイプを鍵の方式に戻してから、Workload Identity 用の付与を消した |
+| Terraform で鍵から切り替える（v3.37.0、`create_before_destroy` あり） | Workload Identity 用の付与、パイプの更新、古い鍵とロールの付与とサービスアカウントの削除の順になった（約 25 秒）。3 回の切り替えを通して、送った 4,800 件は L0 で欠損 0。再配信の重複が L0 と L1 に 400 件あり、L1 の `MessageId` の種類の数は 4,800 で一致した。`terraform destroy` で 8 リソースを消し、何も残らなかった |
 | 検証環境の本線のパイプ | PATCH で切り替え、5 分間 Running が続くのを確かめた。約 22 分後に古い鍵とロールの付与を削除し、取り込みは続いた |
 | ブラウザで作る（[ブラウザでの構築](setup-console.md) の 5 と 7） | 「Authentication method」で「Workload identity」を選ぶと、ロールを付ける相手のサービスアカウントが画面に出た。IAM の「Grant access」でカスタムロールを付けると、接続の検証とトピックの一覧が通った。作成から約 30 秒で Running になり、作成後に送った合成ログ 3,800 件は L0 と L1 で欠損 0 |
 | `clickhousectl` | 0.4.2（2026-09-03）は鍵ファイルが必須で、Workload Identity のパイプは作れない。対応はリリース前の変更に入っている |
